@@ -386,7 +386,7 @@ class PinnaSessionController(
         val hostNowNanos = httpClient?.fetchHostTimeNanos()?.getOrNull() ?: System.nanoTime()
         if (sessionId != null && !isActiveListenerSession(sessionId)) return
         val mediaUri = listenerMediaUrl(endpoint, track.id)
-        val headers = httpClient?.authorizationHeaders(token) ?: authorizationHeaders(token)
+        val headers = httpClient?.authorizationHeaders(token) ?: mapOf("Authorization" to "Bearer $token")
         val manualOffsetMs = state.value.listenerSync.manualOffsetMs
         val sync = listenerSync
         val targetPositionMs = if (sync != null && sync.isReady) {
@@ -756,9 +756,6 @@ class PinnaSessionController(
 
 private fun listenerMediaUrl(endpoint: LocalRoomEndpoint, trackId: String): String =
     "http://${endpoint.host}:${endpoint.port}/media/${URLEncoder.encode(trackId, "UTF-8")}"
-
-private fun authorizationHeaders(token: String): Map<String, String> =
-    mapOf("Authorization" to "Bearer $token")
 
 private fun localPathFromUri(uri: String): String {
     if (uri.startsWith("file://")) return uri.removePrefix("file://").let(::File).path
