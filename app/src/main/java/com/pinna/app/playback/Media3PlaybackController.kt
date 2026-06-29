@@ -1,29 +1,44 @@
 package com.pinna.app.playback
 
 import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.MediaSession
 import com.pinna.app.core.model.PlaybackState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
 class Media3PlaybackController(context: Context) : PlaybackController {
+    private val appContext = context.applicationContext
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-    private val player = ExoPlayer.Builder(context.applicationContext)
+    private val player = ExoPlayer.Builder(appContext)
         .setMediaSourceFactory(
-            DefaultMediaSourceFactory(context.applicationContext)
+            DefaultMediaSourceFactory(appContext)
                 .setDataSourceFactory(httpDataSourceFactory),
         )
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
         .build()
+    private val mediaSession = MediaSession.Builder(appContext, player).build()
     private val _snapshots = MutableStateFlow(PlaybackSnapshot())
 
     override val snapshots: StateFlow<PlaybackSnapshot> = _snapshots
 
     init {
+        PlaybackServiceHolder.session = mediaSession
         player.addListener(
             object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -48,6 +63,7 @@ class Media3PlaybackController(context: Context) : PlaybackController {
         player.prepare()
         player.seekTo(positionMs)
         player.play()
+        ensurePlaybackServiceStarted()
         _snapshots.value = PlaybackSnapshot(PlaybackState.PLAYING, trackId, positionMs)
     }
 
@@ -71,7 +87,21 @@ class Media3PlaybackController(context: Context) : PlaybackController {
     }
 
     fun release() {
+        PlaybackServiceHolder.session = null
+        runCatching { appContext.stopService(Intent(appContext, PinnaPlaybackService::class.java)) }
+        mediaSession.release()
         player.release()
+    }
+
+    private fun ensurePlaybackServiceStarted() {
+        // Best-effort: hosts the foreground media notification so playback survives backgrounding.
+        // Guarded so a service-start failure can never break in-app playback.
+        runCatching {
+            ContextCompat.startForegroundService(
+                appContext,
+                Intent(appContext, PinnaPlaybackService::class.java),
+            )
+        }
     }
 
     private fun publishSnapshot(stateOverride: PlaybackState? = null) {
