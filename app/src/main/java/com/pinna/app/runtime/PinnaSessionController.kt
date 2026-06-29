@@ -3,6 +3,7 @@ package com.pinna.app.runtime
 import com.pinna.app.core.model.PlaybackState
 import com.pinna.app.core.model.Track
 import com.pinna.app.core.model.toNetworkVisibleTrack
+import com.pinna.app.connectivity.LocalAddressValidator
 import com.pinna.app.connectivity.LocalHotspotCoordinator
 import com.pinna.app.connectivity.LocalHotspotSession
 import com.pinna.app.connectivity.LocalHotspotState
@@ -301,6 +302,15 @@ class PinnaSessionController(
             }
             is QrDecodeResult.Valid -> {
                 val payload = decoded.payload
+                if (!LocalAddressValidator.isAllowedLocalHost(payload.host)) {
+                    _state.update {
+                        it.copy(
+                            screen = PinnaScreen.Scanner,
+                            errorMessage = "This room is not on your local network.",
+                        )
+                    }
+                    return
+                }
                 val endpoint = LocalRoomEndpoint(payload.host, payload.port, payload.roomId)
                 val attemptId = nextJoinAttemptId()
                 cancelListenerControlStream()

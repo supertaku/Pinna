@@ -249,6 +249,29 @@ class PinnaSessionControllerTest {
     }
 
     @Test
+    fun joinNonLocalHostPayloadIsRejected() = runBlocking {
+        val client = FakeLocalRoomClient(RoomState(roomId = "room-1", hostDeviceId = "host-1"))
+        val controller = newController(client = client)
+        val payload = QrJoinPayloadCodec.encode(
+            RoomJoinPayload(
+                version = 1,
+                roomId = "room-1",
+                host = "8.8.8.8",
+                port = 1234,
+                token = "token",
+                expiresAtEpochMillis = 2_000,
+                fingerprint = "fp",
+            ),
+        )
+
+        controller.joinRoom(payload, nowEpochMillis = 1_000)
+
+        assertEquals("This room is not on your local network.", controller.state.value.errorMessage)
+        assertEquals(PinnaScreen.Scanner, controller.state.value.screen)
+        assertEquals(null, controller.state.value.listenerRoomState)
+    }
+
+    @Test
     fun joinValidPayloadFetchesRoomState() = runBlocking {
         val client = FakeLocalRoomClient(RoomState(roomId = "room-1", hostDeviceId = "host-1", queue = listOf(track), currentTrackId = "track-1"))
         val controller = newController(client = client)
