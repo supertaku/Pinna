@@ -24,6 +24,9 @@ Implemented:
 - local-room domain and protocol models
 - JVM, Room, and Compose tests for the highest-risk logic
 - app-private Storage Access Framework import copy flow
+- optional host-side link import (paste a YouTube link → on-device audio extraction via
+  NewPipeExtractor → download into app-private storage). Sideload/F-Droid-only: this violates Google
+  Play policy + YouTube ToS, and NewPipeExtractor is GPL-3.0. See docs/privacy-and-security.md.
 - Room database persistence with startup hydration of imported tracks
 - Media3-backed playback controller with playback-speed nudges and buffered-position reporting
 - authenticated local HTTP room server/client

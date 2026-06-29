@@ -6,6 +6,7 @@ import com.pinna.app.connectivity.LocalHotspotCoordinator
 import com.pinna.app.connectivity.LocalHotspotSession
 import com.pinna.app.connectivity.LocalHotspotState
 import com.pinna.app.library.ImportedTrackCandidate
+import com.pinna.app.library.RemoteTrackImporter
 import com.pinna.app.library.TrackImporter
 import com.pinna.app.library.TrackLibraryRepository
 import com.pinna.app.network.LocalRoomClient
@@ -103,6 +104,46 @@ class PinnaSessionControllerTest {
         assertEquals(listOf(track), cleanedTracks)
         assertFalse(controller.state.value.isBusy)
         assertEquals("database unavailable", controller.state.value.errorMessage)
+    }
+
+    @Test
+    fun importFromUrlAddsAndSavesTrack() {
+        val dispatcher = StandardTestDispatcher()
+        val scope = TestScope(dispatcher)
+        val repository = FakeTrackLibraryRepository()
+        val remote = FakeRemoteTrackImporter(Result.success(track))
+        val controller = newController(remoteImporter = remote, repository = repository, scope = scope)
+
+        controller.importFromUrl("https://youtu.be/dQw4w9WgXcQ")
+        scope.runCurrent()
+
+        assertEquals(listOf(track), controller.state.value.importedTracks)
+        assertEquals(listOf(track), repository.savedTracks)
+        assertFalse(controller.state.value.isBusy)
+    }
+
+    @Test
+    fun importFromUrlFailureShowsErrorAndDoesNotAdd() {
+        val dispatcher = StandardTestDispatcher()
+        val scope = TestScope(dispatcher)
+        val remote = FakeRemoteTrackImporter(Result.failure(IllegalStateException("No audio found")))
+        val controller = newController(remoteImporter = remote, scope = scope)
+
+        controller.importFromUrl("https://youtu.be/dQw4w9WgXcQ")
+        scope.runCurrent()
+
+        assertEquals(emptyList<Track>(), controller.state.value.importedTracks)
+        assertEquals("No audio found", controller.state.value.errorMessage)
+        assertFalse(controller.state.value.isBusy)
+    }
+
+    @Test
+    fun importFromUrlWithoutImporterShowsError() = runBlocking {
+        val controller = newController()
+
+        controller.importFromUrl("https://youtu.be/dQw4w9WgXcQ")
+
+        assertEquals("Link import is not available on this device.", controller.state.value.errorMessage)
     }
 
     @Test
@@ -359,6 +400,7 @@ class PinnaSessionControllerTest {
         client: FakeLocalRoomClient = FakeLocalRoomClient(RoomState(roomId = "room-1", hostDeviceId = "host-1")),
         playback: PlaybackController = FakePlaybackController(),
         importer: TrackImporter? = null,
+        remoteImporter: RemoteTrackImporter? = null,
         repository: TrackLibraryRepository? = null,
         importedTrackCleaner: (Track) -> Unit = {},
         hotspot: LocalHotspotCoordinator? = null,
@@ -368,6 +410,7 @@ class PinnaSessionControllerTest {
         client = client,
         playback = playback,
         importer = importer,
+        remoteImporter = remoteImporter,
         trackRepository = repository,
         importedTrackCleaner = importedTrackCleaner,
         hotspotCoordinator = hotspot,
@@ -384,6 +427,10 @@ class PinnaSessionControllerTest {
 
 private class FakeTrackImporter(private val result: Result<Track>) : TrackImporter {
     override suspend fun import(candidate: ImportedTrackCandidate): Result<Track> = result
+}
+
+private class FakeRemoteTrackImporter(private val result: Result<Track>) : RemoteTrackImporter {
+    override suspend fun importFromUrl(url: String): Result<Track> = result
 }
 
 private class FakeTrackLibraryRepository(

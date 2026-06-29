@@ -12,7 +12,13 @@ Pinna MVP remains an Android-only local listening room. The allowed remaining wo
 
 Out of scope remains:
 
-- Accounts, friend graph, public rooms, chat, moderation, cloud relay, remote internet rooms, iOS, web, Bluetooth transport, streaming-service integrations, microphone capture, system-audio capture, and permanent listener downloads.
+- Accounts, friend graph, public rooms, chat, moderation, cloud relay, remote internet rooms, iOS, web, Bluetooth transport, system-audio capture, and permanent listener downloads.
+
+> Scope addendum (post-MVP, by product decision): two features were added beyond the original MVP
+> boundary. (1) Host-side **link import** (YouTube → on-device audio extraction into app-private
+> storage) — sideload/F-Droid-only because it violates Google Play policy + YouTube ToS; see
+> docs/privacy-and-security.md. (2) **Push-to-talk** voice, which introduces microphone capture. These
+> intentionally relax the earlier "no streaming-service integrations / no microphone capture" exclusions.
 
 ## Transport Model
 

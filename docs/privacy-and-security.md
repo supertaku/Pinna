@@ -41,10 +41,22 @@ Explicitly **not** requested: `RECORD_AUDIO`, any `BLUETOOTH*` transport permiss
 
 ## Network
 
-- No UPnP, no NAT traversal, no cloud relay, no external signaling.
+- No UPnP, no NAT traversal, no cloud relay, no external signaling for the room transport.
 - No analytics or telemetry.
-- The app functions on a local network with no internet access (including the LocalOnlyHotspot
-  fallback).
+- The room transport functions on a local network with no internet access (including the
+  LocalOnlyHotspot fallback).
+
+## Link import (YouTube → audio)
+
+- Optional host-side feature: paste a link; the app resolves the best audio stream on-device with
+  NewPipeExtractor and downloads it over HTTPS into app-private storage. No account, API key, or
+  third-party server is involved.
+- **Distribution impact:** downloading/converting YouTube content violates Google Play policy and
+  YouTube's Terms of Service, so a build shipping this feature must be **sideload / F-Droid only**, not
+  Google Play. NewPipeExtractor is GPL-3.0, so its copyleft obligations apply to distribution.
+- Network egress for this feature goes to Google's video CDN over HTTPS. Imported audio is stored
+  app-private like any other imported track; no link, token, or source URL is persisted.
+- The feature is fragile by nature (it breaks when YouTube changes) and requires ongoing maintenance.
 
 ## LocalOnlyHotspot
 

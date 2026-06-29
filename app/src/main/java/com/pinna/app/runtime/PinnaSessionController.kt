@@ -9,6 +9,7 @@ import com.pinna.app.connectivity.LocalHotspotSession
 import com.pinna.app.connectivity.LocalHotspotState
 import com.pinna.app.network.ControlStreamState
 import com.pinna.app.library.ImportedTrackCandidate
+import com.pinna.app.library.RemoteTrackImporter
 import com.pinna.app.library.TrackImporter
 import com.pinna.app.library.TrackLibraryRepository
 import com.pinna.app.network.HttpLocalRoomClient
@@ -56,6 +57,7 @@ class PinnaSessionController(
     private val client: LocalRoomClient,
     private val playback: PlaybackController,
     private val importer: TrackImporter? = null,
+    private val remoteImporter: RemoteTrackImporter? = null,
     private val trackRepository: TrackLibraryRepository? = null,
     private val importedTrackCleaner: (Track) -> Unit = { track -> File(localPathFromUri(track.localUri)).delete() },
     private val hotspotCoordinator: LocalHotspotCoordinator? = null,
@@ -117,12 +119,9 @@ class PinnaSessionController(
                 candidates.forEach { candidate ->
                     activeImporter.import(candidate)
                         .onSuccess { track ->
-                            runCatching { trackRepository?.saveTrack(track) ?: track }
+                            persistImportedTrack(track)
                                 .onSuccess { saved -> imported += saved }
-                                .onFailure { failure ->
-                                    importedTrackCleaner(track)
-                                    failures += failure.message ?: "Could not save ${track.title}."
-                                }
+                                .onFailure { failure -> failures += failure.message ?: "Could not save ${track.title}." }
                         }
                         .onFailure { failures += it.message ?: "Could not import ${candidate.displayName}" }
                 }
@@ -140,6 +139,43 @@ class PinnaSessionController(
             }
         }
     }
+
+    /**
+     * Imports a track from a pasted link (e.g. YouTube) into private storage, reusing the same
+     * persist-and-cleanup flow as local file import.
+     */
+    fun importFromUrl(url: String) {
+        val activeImporter = remoteImporter
+        if (activeImporter == null) {
+            _state.update { it.copy(errorMessage = "Link import is not available on this device.") }
+            return
+        }
+        if (url.isBlank()) {
+            _state.update { it.copy(errorMessage = "Paste a link to import.") }
+            return
+        }
+        scope.launch {
+            _state.update { it.copy(isBusy = true, errorMessage = null) }
+            val outcome = activeImporter.importFromUrl(url).fold(
+                onSuccess = { track -> persistImportedTrack(track) },
+                onFailure = { Result.failure(it) },
+            )
+            _state.update { app ->
+                outcome.fold(
+                    onSuccess = { saved ->
+                        app.copy(importedTracks = app.importedTracks + saved, isBusy = false, errorMessage = null)
+                    },
+                    onFailure = { failure ->
+                        app.copy(isBusy = false, errorMessage = failure.message ?: "Could not import from link.")
+                    },
+                )
+            }
+        }
+    }
+
+    private suspend fun persistImportedTrack(track: Track): Result<Track> =
+        runCatching { trackRepository?.saveTrack(track) ?: track }
+            .onFailure { importedTrackCleaner(track) }
 
     suspend fun createRoom(useHotspot: Boolean = false, nowEpochMillis: Long = System.currentTimeMillis()) {
         val current = state.value

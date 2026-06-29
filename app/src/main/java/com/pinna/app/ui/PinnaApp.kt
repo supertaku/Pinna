@@ -22,6 +22,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -77,6 +78,7 @@ fun PinnaApp(controller: PinnaSessionController) {
                 state = state,
                 onBack = { controller.show(PinnaScreen.Home) },
                 onImportTracks = { importLauncher.launch(arrayOf("audio/*")) },
+                onImportFromUrl = { url -> controller.importFromUrl(url) },
                 onCreateWifiRoom = { scope.launch { controller.createRoom() } },
                 onCreateHotspotRoom = { scope.launch { controller.createRoom(useHotspot = true) } },
             )
@@ -141,9 +143,11 @@ private fun HostSetupScreen(
     state: PinnaAppState,
     onBack: () -> Unit,
     onImportTracks: () -> Unit,
+    onImportFromUrl: (String) -> Unit,
     onCreateWifiRoom: () -> Unit,
     onCreateHotspotRoom: () -> Unit,
 ) {
+    var linkText by rememberSaveable { mutableStateOf("") }
     Scaffold(topBar = { LargeTopAppBar(title = { Text("Host setup") }) }) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding),
@@ -161,6 +165,29 @@ private fun HostSetupScreen(
                         .testTag("import-tracks-button"),
                 ) {
                     Text(if (state.isBusy) "Importing..." else "Import tracks")
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = linkText,
+                    onValueChange = { linkText = it },
+                    label = { Text("Paste a YouTube link") },
+                    singleLine = true,
+                    enabled = !state.isBusy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("import-link-input"),
+                )
+                OutlinedButton(
+                    onClick = {
+                        onImportFromUrl(linkText.trim())
+                        linkText = ""
+                    },
+                    enabled = !state.isBusy && linkText.isNotBlank(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("import-link-button"),
+                ) {
+                    Text("Add from link")
                 }
             }
             items(state.importedTracks) { track ->
