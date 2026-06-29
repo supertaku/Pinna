@@ -37,6 +37,10 @@ Implemented:
 - listener startup playback from host-served media URLs with bearer headers
 - production sync loop: scheduled host-time starts, NTP sampling, drift correction, manual offset
 - sync diagnostics: quality chip, round-trip estimate, drift estimate, correction count, buffer health
+- half-duplex push-to-talk voice between people in the room (microphone, PCM over the room WebSocket,
+  audio-focus ducking of music). Adds the `RECORD_AUDIO` permission; see docs/privacy-and-security.md.
+- listener auto-reconnect with jittered backoff; SSRF/local-address guard on join; Media3
+  MediaSessionService for background playback
 
 Validated by automated tests and code review; multi-device audio sync requires the manual device
 matrix in [docs/qa-checklist.md](docs/qa-checklist.md) before release-candidate sign-off.

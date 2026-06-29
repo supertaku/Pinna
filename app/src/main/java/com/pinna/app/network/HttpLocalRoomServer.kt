@@ -7,7 +7,9 @@ import com.pinna.app.room.RoomEvent
 import com.pinna.app.room.RoomReducer
 import com.pinna.app.room.RoomState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
@@ -48,6 +50,11 @@ class HttpLocalRoomServer(
 
     /** Live room snapshot, updated as listeners join/ready and the host broadcasts control events. */
     val rooms: StateFlow<RoomState> = _rooms.asStateFlow()
+
+    private val _incomingControl = MutableSharedFlow<RoomControlMessage>(extraBufferCapacity = 64)
+
+    /** Listener-originated push-to-talk messages (voice/start/end), surfaced for the host to play. */
+    val incomingControl: SharedFlow<RoomControlMessage> = _incomingControl
 
     @Volatile
     override var endpoint: LocalRoomEndpoint? = null
@@ -143,6 +150,9 @@ class HttpLocalRoomServer(
                 sequenceNumber = message.sequenceNumber,
             )
             is RoomControlMessage.SyncSample,
+            is RoomControlMessage.StartTalk,
+            is RoomControlMessage.EndTalk,
+            is RoomControlMessage.Voice,
             is RoomControlMessage.Error,
             -> return state
         }
@@ -239,10 +249,14 @@ class HttpLocalRoomServer(
                 when (val frame = RoomWebSocketFrameCodec.decodeClientFrame(frameBytes)) {
                     is RoomWebSocketFrame.Text -> {
                         val message = RoomProtocol.decode(frame.value)
-                        if (message is RoomControlMessage.SyncSample) {
-                            socket.writeFrame(RoomWebSocketFrameCodec.encodeText(RoomProtocol.encode(stampSyncSample(message))))
-                        } else {
-                            handleListenerControlMessage(message)
+                        when (message) {
+                            is RoomControlMessage.SyncSample ->
+                                socket.writeFrame(RoomWebSocketFrameCodec.encodeText(RoomProtocol.encode(stampSyncSample(message))))
+                            is RoomControlMessage.Voice,
+                            is RoomControlMessage.StartTalk,
+                            is RoomControlMessage.EndTalk,
+                            -> relayPushToTalk(message)
+                            else -> handleListenerControlMessage(message)
                         }
                     }
                     is RoomWebSocketFrame.Ping -> socket.writeFrame(RoomWebSocketFrameCodec.encodePong(frame.payload))
@@ -270,12 +284,26 @@ class HttpLocalRoomServer(
         return request.copy(t2HostNanos = receiveNanos, t3HostNanos = System.nanoTime())
     }
 
+    /**
+     * Fans a listener-originated push-to-talk message out to every connected control stream (so other
+     * listeners hear it) and surfaces it on [incomingControl] so the host can play it. Push-to-talk
+     * carries no room authority and never mutates room state.
+     */
+    private fun relayPushToTalk(message: RoomControlMessage) {
+        controlStreams.broadcastText(RoomProtocol.encode(message))
+        _incomingControl.tryEmit(message)
+    }
+
     private fun handleListenerControlMessage(message: RoomControlMessage) {
         when (message) {
             is RoomControlMessage.Join,
             is RoomControlMessage.Ready,
             is RoomControlMessage.SyncSample,
             -> recordListenerControlMessage(message)
+            is RoomControlMessage.Voice,
+            is RoomControlMessage.StartTalk,
+            is RoomControlMessage.EndTalk,
+            -> relayPushToTalk(message)
             is RoomControlMessage.Play,
             is RoomControlMessage.Pause,
             is RoomControlMessage.Seek,
@@ -339,6 +367,9 @@ private fun RoomControlMessage.withFreshSequenceAfter(currentSequenceNumber: Lon
         is RoomControlMessage.Join,
         is RoomControlMessage.Ready,
         is RoomControlMessage.SyncSample,
+        is RoomControlMessage.StartTalk,
+        is RoomControlMessage.EndTalk,
+        is RoomControlMessage.Voice,
         is RoomControlMessage.Error,
         -> this
     }

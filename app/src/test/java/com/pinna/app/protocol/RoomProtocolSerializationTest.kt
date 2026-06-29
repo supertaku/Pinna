@@ -53,6 +53,17 @@ class RoomProtocolSerializationTest {
     }
 
     @Test
+    fun pushToTalkMessages_roundTrip() {
+        val voice = RoomControlMessage.Voice(deviceId = "dev-1", sequence = 12, pcmBase64 = "AAEC/f7/")
+        val start = RoomControlMessage.StartTalk(deviceId = "dev-1")
+        val end = RoomControlMessage.EndTalk(deviceId = "dev-2")
+
+        assertEquals(voice, RoomProtocol.decode(RoomProtocol.encode(voice)))
+        assertEquals(start, RoomProtocol.decode(RoomProtocol.encode(start)))
+        assertEquals(end, RoomProtocol.decode(RoomProtocol.encode(end)))
+    }
+
+    @Test
     fun missingType_isRejected() {
         val decoded = RoomProtocol.decode("sequenceNumber=1")
 

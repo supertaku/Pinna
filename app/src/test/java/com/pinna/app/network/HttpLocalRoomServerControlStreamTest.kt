@@ -110,6 +110,36 @@ class HttpLocalRoomServerControlStreamTest {
     }
 
     @Test
+    fun listenerVoiceFrameIsRebroadcastToOtherStreams() = runBlocking {
+        val server = newStartedServer()
+        val endpoint = server.endpoint!!
+        val voice = RoomControlMessage.Voice(deviceId = "listener-1", sequence = 1, pcmBase64 = "AAEC")
+
+        TestControlStreamConnection.open(endpoint, token = "token-123").use { talker ->
+            TestControlStreamConnection.open(endpoint, token = "token-123").use { other ->
+                talker.send(voice)
+
+                assertEquals(voice, other.readMessage())
+            }
+        }
+    }
+
+    @Test
+    fun listenerVoiceFrameDoesNotMutateRoomState() = runBlocking {
+        val server = newStartedServer()
+        val endpoint = server.endpoint!!
+
+        TestControlStreamConnection.open(endpoint, token = "token-123").use { stream ->
+            stream.send(RoomControlMessage.StartTalk("listener-1"))
+            // Give the relay a moment, then confirm room state is untouched.
+            val room = fetchRoom(endpoint)
+            assertEquals(PlaybackState.IDLE, room.playback)
+            assertEquals(0, room.sequenceNumber)
+            assertTrue(room.listeners.isEmpty())
+        }
+    }
+
+    @Test
     fun postControlHostOnlyMessageIsIgnoredAndDoesNotMutateRoomState() = runBlocking {
         val server = newStartedServer()
         val endpoint = server.endpoint!!

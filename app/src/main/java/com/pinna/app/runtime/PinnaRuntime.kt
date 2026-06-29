@@ -17,6 +17,8 @@ import com.pinna.app.network.HttpLocalRoomClient
 import com.pinna.app.network.HttpLocalRoomServer
 import com.pinna.app.playback.Media3PlaybackController
 import com.pinna.app.sync.AudioRoute
+import com.pinna.app.voice.AudioRecordVoiceSource
+import com.pinna.app.voice.AudioTrackVoiceSink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,6 +44,8 @@ class PinnaRuntime(context: Context) {
         httpClient = httpClient,
     )
     private val hotspotCoordinator = AndroidLocalHotspotCoordinator(appContext)
+    private val voiceSource = AudioRecordVoiceSource()
+    private val voiceSink = AudioTrackVoiceSink()
     private val database = Room.databaseBuilder(appContext, PinnaDatabase::class.java, "pinna.db").build()
     private val trackRepository = RoomTrackRepository(database.trackDao())
 
@@ -55,6 +59,8 @@ class PinnaRuntime(context: Context) {
         remoteImporter = remoteImporter,
         trackRepository = trackRepository,
         hotspotCoordinator = hotspotCoordinator,
+        voiceSource = voiceSource,
+        voiceSink = voiceSink,
         audioRouteProvider = ::currentAudioRoute,
         scope = runtimeScope,
     )

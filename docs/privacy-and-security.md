@@ -10,13 +10,25 @@ accounts, no cloud storage, and no analytics.
 | `INTERNET` | Bind the local room HTTP/WebSocket server and connect on the LAN. | Local sockets only; no external relay. |
 | `ACCESS_NETWORK_STATE` | Diagnose Wi-Fi vs. cellular and same-network checks. | Read-only. |
 | `CAMERA` | Scan a room QR code to join. | Requested only when the scanner opens. |
+| `RECORD_AUDIO` | Push-to-talk voice between people in the room. | Requested only when the user first holds the talk button; capture runs only while held. |
 | `CHANGE_WIFI_STATE` | Start a LocalOnlyHotspot fallback. | Host-initiated only. |
 | `NEARBY_WIFI_DEVICES` (API 33+) | LocalOnlyHotspot on modern Android. | `neverForLocation` flag set. |
 | `ACCESS_FINE_LOCATION` (≤ API 32) | Legacy Wi-Fi API requirement for hotspot. | `maxSdkVersion=32`. |
 | `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Keep playback alive while hosting/listening. | Media playback only. |
 
-Explicitly **not** requested: `RECORD_AUDIO`, any `BLUETOOTH*` transport permission,
-`CAPTURE_AUDIO_OUTPUT`. These are asserted by `ManifestPolicyTest`.
+Explicitly **not** requested: any `BLUETOOTH*` transport permission, `CAPTURE_AUDIO_OUTPUT`, or
+media-projection capture. `RECORD_AUDIO` is requested only for push-to-talk (see below). These are
+asserted by `ManifestPolicyTest`.
+
+## Push-to-talk (microphone)
+
+- The microphone is used only for half-duplex push-to-talk while the user holds the talk button.
+  Captured PCM is base64-encoded and sent over the existing authenticated room WebSocket; it is never
+  written to storage and never leaves the local network.
+- The "no microphone" posture of earlier MVP milestones is intentionally relaxed for this feature; the
+  Play Data Safety story must disclose microphone use for in-room voice (no recording is stored or
+  shared). Background-while-locked talking (a microphone foreground service) is a documented follow-up;
+  the current implementation captures only while the app is foreground and the button is held.
 
 ## Token Handling
 
@@ -71,4 +83,5 @@ Explicitly **not** requested: `RECORD_AUDIO`, any `BLUETOOTH*` transport permiss
 - Camera used only to scan a room QR code.
 - Wi-Fi hotspot credentials displayed only to the host.
 - Imported audio metadata stored locally on the host device.
+- Microphone used only for in-room push-to-talk voice; audio is not recorded or stored.
 - No accounts, no cloud storage, no data sold or shared.

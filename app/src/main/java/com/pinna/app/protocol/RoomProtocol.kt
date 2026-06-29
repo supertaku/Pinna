@@ -51,6 +51,14 @@ object RoomProtocol {
             "t2HostNanos" to message.t2HostNanos.toString(),
             "t3HostNanos" to message.t3HostNanos.toString(),
         )
+        is RoomControlMessage.StartTalk -> fields("type" to "starttalk", "deviceId" to message.deviceId)
+        is RoomControlMessage.EndTalk -> fields("type" to "endtalk", "deviceId" to message.deviceId)
+        is RoomControlMessage.Voice -> fields(
+            "type" to "voice",
+            "deviceId" to message.deviceId,
+            "sequence" to message.sequence.toString(),
+            "pcm" to message.pcmBase64,
+        )
         is RoomControlMessage.Error -> fields("type" to "error", "code" to message.code, "message" to message.message)
     }
 
@@ -95,6 +103,13 @@ object RoomProtocol {
                 t1ClientNanos = values["t1ClientNanos"]?.toLongOrNull() ?: 0,
                 t2HostNanos = values["t2HostNanos"]?.toLongOrNull() ?: 0,
                 t3HostNanos = values["t3HostNanos"]?.toLongOrNull() ?: 0,
+            )
+            "starttalk" -> RoomControlMessage.StartTalk(values["deviceId"].orEmpty())
+            "endtalk" -> RoomControlMessage.EndTalk(values["deviceId"].orEmpty())
+            "voice" -> RoomControlMessage.Voice(
+                deviceId = values["deviceId"].orEmpty(),
+                sequence = values["sequence"]?.toLongOrNull() ?: 0,
+                pcmBase64 = values["pcm"].orEmpty(),
             )
             "error" -> RoomControlMessage.Error(values["code"].orEmpty(), values["message"].orEmpty())
             else -> RoomControlMessage.Error("invalid_message", "Unsupported message type.")

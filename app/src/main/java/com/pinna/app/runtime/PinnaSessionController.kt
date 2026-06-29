@@ -32,6 +32,10 @@ import com.pinna.app.sync.DriftAction
 import com.pinna.app.sync.ListenerSyncController
 import com.pinna.app.sync.PlaybackTimeline
 import com.pinna.app.sync.RouteLatencyAdvisor
+import com.pinna.app.voice.TalkArbiter
+import com.pinna.app.voice.VoiceSink
+import com.pinna.app.voice.VoiceSource
+import java.util.Base64
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +65,9 @@ class PinnaSessionController(
     private val trackRepository: TrackLibraryRepository? = null,
     private val importedTrackCleaner: (Track) -> Unit = { track -> File(localPathFromUri(track.localUri)).delete() },
     private val hotspotCoordinator: LocalHotspotCoordinator? = null,
+    private val voiceSource: VoiceSource? = null,
+    private val voiceSink: VoiceSink? = null,
+    private val deviceId: String = UUID.randomUUID().toString(),
     private val hostName: String = "Android host",
     private val hostStartLeadNanos: Long = HOST_START_LEAD_NANOS,
     private val syncSampleIntervalMs: Long = SYNC_SAMPLE_INTERVAL_MS,
@@ -77,6 +84,9 @@ class PinnaSessionController(
     private var hostStartJob: Job? = null
     private var hostRoomJob: Job? = null
     private var reconnectJob: Job? = null
+    private var hostVoiceJob: Job? = null
+    private val talkArbiter = TalkArbiter()
+    private val voiceSequence = AtomicLong(0)
     @Volatile
     private var listenerSync: ListenerSyncController? = null
     @Volatile
@@ -238,6 +248,7 @@ class PinnaSessionController(
             )
         }
         startHostRoomObserver()
+        startHostVoiceObserver()
     }
 
     private fun startHostRoomObserver() {
@@ -255,10 +266,13 @@ class PinnaSessionController(
     }
 
     suspend fun endRoom() {
+        stopTalkingInternal()
         hostStartJob?.cancel()
         hostStartJob = null
         hostRoomJob?.cancel()
         hostRoomJob = null
+        hostVoiceJob?.cancel()
+        hostVoiceJob = null
         server.stop()
         stopHotspot()
         playback.stop()
@@ -542,6 +556,10 @@ class PinnaSessionController(
                     handleSyncReply(message, sessionId)
                 }
             }
+            is RoomControlMessage.StartTalk,
+            is RoomControlMessage.EndTalk,
+            is RoomControlMessage.Voice,
+            -> handleIncomingVoiceControl(message)
             is RoomControlMessage.Join,
             is RoomControlMessage.Ready,
             -> Unit
@@ -562,6 +580,7 @@ class PinnaSessionController(
     }
 
     suspend fun leaveRoom() {
+        stopTalkingInternal()
         cancelListenerControlStream()
         client.disconnect()
         playback.stop()
@@ -572,17 +591,22 @@ class PinnaSessionController(
                 listenerRoomState = null,
                 listenerSync = ListenerSyncStatus(),
                 controlStreamState = ControlStreamState.Disconnected,
+                talkerDeviceId = null,
                 errorMessage = null,
             )
         }
     }
 
     suspend fun shutdown() {
+        stopTalkingInternal()
+        voiceSink?.release()
         cancelListenerControlStream()
         hostStartJob?.cancel()
         hostStartJob = null
         hostRoomJob?.cancel()
         hostRoomJob = null
+        hostVoiceJob?.cancel()
+        hostVoiceJob = null
         scope.coroutineContext.cancelChildren()
         server.stop()
         client.disconnect()
@@ -597,6 +621,7 @@ class PinnaSessionController(
                 listenerRoomState = null,
                 listenerSync = ListenerSyncStatus(),
                 controlStreamState = ControlStreamState.Disconnected,
+                talkerDeviceId = null,
                 hotspotSession = null,
                 hotspotState = hotspotCoordinator?.state?.value ?: LocalHotspotState.Stopped,
                 errorMessage = null,
@@ -647,6 +672,74 @@ class PinnaSessionController(
     }
 
     fun resetManualOffset() = setManualOffsetMs(0)
+
+    /** Stable id for this device, used for half-duplex talk arbitration. */
+    val localDeviceId: String get() = deviceId
+
+    /** Begins push-to-talk if the floor is free. Captured frames are streamed to the room. */
+    fun startTalking() {
+        if (!talkArbiter.requestTalk(deviceId, System.currentTimeMillis())) return
+        _state.update { it.copy(talkerDeviceId = deviceId) }
+        scope.launch { sendTalkControl(RoomControlMessage.StartTalk(deviceId)) }
+        voiceSource?.start { frame ->
+            talkArbiter.noteActivity(deviceId, System.currentTimeMillis())
+            val encoded = Base64.getEncoder().encodeToString(frame)
+            scope.launch { sendTalkControl(RoomControlMessage.Voice(deviceId, voiceSequence.incrementAndGet(), encoded)) }
+        }
+    }
+
+    /** Ends push-to-talk and releases the floor. */
+    fun stopTalking() {
+        val wasTalking = talkArbiter.isTalking(deviceId)
+        stopTalkingInternal()
+        if (wasTalking) scope.launch { sendTalkControl(RoomControlMessage.EndTalk(deviceId)) }
+    }
+
+    private fun stopTalkingInternal() {
+        voiceSource?.stop()
+        talkArbiter.endTalk(deviceId)
+        _state.update { if (it.talkerDeviceId == deviceId) it.copy(talkerDeviceId = null) else it }
+    }
+
+    private suspend fun sendTalkControl(message: RoomControlMessage) {
+        // Host fans out to listeners directly; a listener sends to the host, which rebroadcasts.
+        if (state.value.hostRoomState != null) {
+            server.broadcast(message)
+        } else {
+            client.send(message)
+        }
+    }
+
+    private fun handleIncomingVoiceControl(message: RoomControlMessage) {
+        when (message) {
+            is RoomControlMessage.StartTalk -> {
+                if (message.deviceId == deviceId) return
+                talkArbiter.requestTalk(message.deviceId, System.currentTimeMillis())
+                _state.update { it.copy(talkerDeviceId = message.deviceId) }
+            }
+            is RoomControlMessage.EndTalk -> {
+                if (message.deviceId == deviceId) return
+                talkArbiter.endTalk(message.deviceId)
+                _state.update { if (it.talkerDeviceId == message.deviceId) it.copy(talkerDeviceId = null) else it }
+            }
+            is RoomControlMessage.Voice -> {
+                if (message.deviceId == deviceId) return
+                talkArbiter.noteActivity(message.deviceId, System.currentTimeMillis())
+                _state.update { if (it.talkerDeviceId == null) it.copy(talkerDeviceId = message.deviceId) else it }
+                val pcm = runCatching { Base64.getDecoder().decode(message.pcmBase64) }.getOrNull() ?: return
+                voiceSink?.play(pcm)
+            }
+            else -> Unit
+        }
+    }
+
+    private fun startHostVoiceObserver() {
+        hostVoiceJob?.cancel()
+        val activeServer = server as? HttpLocalRoomServer ?: return
+        hostVoiceJob = scope.launch {
+            activeServer.incomingControl.collect { message -> handleIncomingVoiceControl(message) }
+        }
+    }
 
     private fun startListenerSync(endpoint: LocalRoomEndpoint, token: String, sessionId: Long) {
         listenerSync = ListenerSyncController(playback)

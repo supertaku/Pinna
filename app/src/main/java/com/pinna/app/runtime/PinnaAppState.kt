@@ -52,6 +52,7 @@ data class PinnaAppState(
     val listenerRoomState: RoomState? = null,
     val listenerSync: ListenerSyncStatus = ListenerSyncStatus(),
     val controlStreamState: ControlStreamState = ControlStreamState.Disconnected,
+    val talkerDeviceId: String? = null,
     val hotspotState: LocalHotspotState = LocalHotspotState.Stopped,
     val hotspotSession: LocalHotspotSession? = null,
     val networkHelpMessage: String? = null,

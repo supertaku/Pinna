@@ -1,6 +1,9 @@
 package com.pinna.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
@@ -35,13 +39,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pinna.app.connectivity.LocalHotspotState
 import com.pinna.app.core.model.PlaybackState
@@ -84,9 +92,12 @@ fun PinnaApp(controller: PinnaSessionController) {
             )
             PinnaScreen.HostRoom -> HostRoomScreen(
                 state = state,
+                localDeviceId = controller.localDeviceId,
                 onPlayPause = { scope.launch { controller.playPause() } },
                 onEndRoom = { scope.launch { controller.endRoom() } },
                 onDiagnostics = { controller.show(PinnaScreen.Diagnostics) },
+                onStartTalk = { controller.startTalking() },
+                onStopTalk = { controller.stopTalking() },
             )
             PinnaScreen.Scanner -> ScannerScreen(
                 error = state.errorMessage,
@@ -101,10 +112,13 @@ fun PinnaApp(controller: PinnaSessionController) {
             )
             PinnaScreen.ListenerRoom -> ListenerRoomScreen(
                 state = state,
+                localDeviceId = controller.localDeviceId,
                 onLeave = { scope.launch { controller.leaveRoom() } },
                 onDiagnostics = { controller.show(PinnaScreen.Diagnostics) },
                 onManualOffsetChange = { controller.setManualOffsetMs(it) },
                 onResetOffset = { controller.resetManualOffset() },
+                onStartTalk = { controller.startTalking() },
+                onStopTalk = { controller.stopTalking() },
             )
             PinnaScreen.Diagnostics -> DiagnosticsScreen(
                 state = state,
@@ -223,9 +237,12 @@ private fun HostSetupScreen(
 @Composable
 private fun HostRoomScreen(
     state: PinnaAppState,
+    localDeviceId: String,
     onPlayPause: () -> Unit,
     onEndRoom: () -> Unit,
     onDiagnostics: () -> Unit,
+    onStartTalk: () -> Unit,
+    onStopTalk: () -> Unit,
 ) {
     var showPayload by rememberSaveable { mutableStateOf(false) }
     val room = state.hostRoomState
@@ -279,6 +296,12 @@ private fun HostRoomScreen(
                     Text("Show QR")
                 }
             }
+            PushToTalkButton(
+                talkerDeviceId = state.talkerDeviceId,
+                localDeviceId = localDeviceId,
+                onStartTalk = onStartTalk,
+                onStopTalk = onStopTalk,
+            )
             OutlinedButton(onClick = onEndRoom, modifier = Modifier.fillMaxWidth()) { Text("End room") }
         }
     }
@@ -350,10 +373,13 @@ private fun PayloadEntryScreen(error: String?, onBack: () -> Unit, onJoin: (Stri
 @Composable
 private fun ListenerRoomScreen(
     state: PinnaAppState,
+    localDeviceId: String,
     onLeave: () -> Unit,
     onDiagnostics: () -> Unit,
     onManualOffsetChange: (Long) -> Unit,
     onResetOffset: () -> Unit,
+    onStartTalk: () -> Unit,
+    onStopTalk: () -> Unit,
 ) {
     val room = state.listenerRoomState
     val sync = state.listenerSync
@@ -387,8 +413,72 @@ private fun ListenerRoomScreen(
                 )
             }
             SyncCalibrationCard(sync = sync, onManualOffsetChange = onManualOffsetChange, onResetOffset = onResetOffset)
+            PushToTalkButton(
+                talkerDeviceId = state.talkerDeviceId,
+                localDeviceId = localDeviceId,
+                onStartTalk = onStartTalk,
+                onStopTalk = onStopTalk,
+            )
             OutlinedButton(onClick = onLeave, modifier = Modifier.fillMaxWidth()) { Text("Leave room") }
         }
+    }
+}
+
+@Composable
+private fun PushToTalkButton(
+    talkerDeviceId: String?,
+    localDeviceId: String,
+    onStartTalk: () -> Unit,
+    onStopTalk: () -> Unit,
+) {
+    val context = LocalContext.current
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted -> hasPermission = granted }
+
+    val isTalking = talkerDeviceId == localDeviceId
+    val someoneElseTalking = talkerDeviceId != null && talkerDeviceId != localDeviceId
+    val label = when {
+        isTalking -> "Talking…"
+        someoneElseTalking -> "Someone is talking"
+        else -> "Hold to talk"
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = if (isTalking) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("push-to-talk-button")
+            .pointerInput(someoneElseTalking, hasPermission) {
+                if (someoneElseTalking) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        if (!hasPermission) {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            return@detectTapGestures
+                        }
+                        onStartTalk()
+                        tryAwaitRelease()
+                        onStopTalk()
+                    },
+                )
+            },
+    ) {
+        Text(
+            label,
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

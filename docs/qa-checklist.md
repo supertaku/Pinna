@@ -26,8 +26,13 @@
 - WebSocket handshake, frame codec, oversized-frame rejection, unauthorized upgrade
 - WebSocket sync-sample request/host-stamped reply
 - session controller host/listener state transitions and sync wiring
-- manifest policy assertions (no microphone/Bluetooth, camera-only, single exported component)
+- manifest policy assertions (no Bluetooth/system-capture, mic only for PTT, single exported component)
 - Room persistence policy (no token/payload fields in `TrackEntity`)
+- local-address/SSRF guard on join (LocalAddressValidator)
+- listener reconnect backoff (ReconnectBackoff) and control-stream drop → reconnect
+- YouTube link recognition/normalization (YouTubeUrlValidator) and importFromUrl dispatch
+- push-to-talk: protocol round-trip, half-duplex TalkArbiter, server voice fan-out, controller
+  voice in/out + arbitration
 
 ## Instrumented / Compose Coverage Present
 
@@ -68,6 +73,12 @@ Scenarios:
 - host ends the room; listeners exit cleanly and the hotspot stops
 - manual output offset slider shifts listener timing as expected
 - Bluetooth output shows the route-latency warning
+- paste a YouTube link on the host; audio downloads into private storage and plays in the room
+  (sideload build only; requires network)
+- push-to-talk: hold the talk button on two devices; only one talker at a time; music ducks while
+  someone talks and restores after; measure perceived voice latency
+- microphone permission is requested only on first talk and capture stops on release
+- background/locked-screen playback continues (Media3 MediaSessionService) — device verification
 
 ## Audio Sync Validation
 

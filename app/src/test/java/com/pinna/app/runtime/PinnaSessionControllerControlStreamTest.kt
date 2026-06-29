@@ -14,6 +14,9 @@ import com.pinna.app.qr.QrJoinPayloadCodec
 import com.pinna.app.qr.RoomJoinPayload
 import com.pinna.app.room.RoomState
 import com.pinna.app.sync.SyncQuality
+import com.pinna.app.voice.VoiceSink
+import com.pinna.app.voice.VoiceSource
+import java.util.Base64
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CompletableDeferred
@@ -282,6 +285,70 @@ class PinnaSessionControllerControlStreamTest {
     }
 
     @Test
+    fun incomingVoiceFromAnotherDevicePlaysAndSetsTalker() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
+        val sink = RecordingVoiceSink()
+        val controller = voiceController(client = client, sink = sink, deviceId = "me")
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+
+        val pcm = byteArrayOf(1, 2, 3, 4)
+        client.emit(RoomControlMessage.Voice("other", sequence = 1, pcmBase64 = Base64.getEncoder().encodeToString(pcm)))
+        scope.runCurrent()
+
+        assertEquals(1, sink.frames.size)
+        assertEquals("other", controller.state.value.talkerDeviceId)
+    }
+
+    @Test
+    fun incomingVoiceFromSelfIsIgnored() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
+        val sink = RecordingVoiceSink()
+        val controller = voiceController(client = client, sink = sink, deviceId = "me")
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+
+        client.emit(RoomControlMessage.Voice("me", sequence = 1, pcmBase64 = Base64.getEncoder().encodeToString(byteArrayOf(9))))
+        scope.runCurrent()
+
+        assertTrue(sink.frames.isEmpty())
+        assertNull(controller.state.value.talkerDeviceId)
+    }
+
+    @Test
+    fun startTalkingGrantsFloorAndSendsStartTalk() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
+        val source = RecordingVoiceSource()
+        val controller = voiceController(client = client, source = source, deviceId = "me")
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+
+        controller.startTalking()
+        scope.runCurrent()
+
+        assertEquals("me", controller.state.value.talkerDeviceId)
+        assertTrue(source.started)
+        assertTrue(client.sentMessages.any { it is RoomControlMessage.StartTalk && it.deviceId == "me" })
+    }
+
+    @Test
+    fun cannotTalkWhileAnotherDeviceHoldsFloor() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
+        val source = RecordingVoiceSource()
+        val controller = voiceController(client = client, source = source, deviceId = "me")
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+
+        client.emit(RoomControlMessage.StartTalk("other"))
+        scope.runCurrent()
+        controller.startTalking()
+        scope.runCurrent()
+
+        assertEquals("other", controller.state.value.talkerDeviceId)
+        assertTrue(!source.started)
+    }
+
+    @Test
     fun streamErrorMessageIsSurfaced() = runBlocking {
         val client = ControlStreamFakeClient(room(sequenceNumber = 1))
         val controller = newController(client = client)
@@ -301,6 +368,22 @@ class PinnaSessionControllerControlStreamTest {
         server = ControlStreamFakeLocalRoomServer(),
         client = client,
         playback = playback,
+        hostName = "host-1",
+        scope = scope,
+    ).also { controllers += it }
+
+    private fun voiceController(
+        client: LocalRoomClient,
+        sink: VoiceSink? = null,
+        source: VoiceSource? = null,
+        deviceId: String,
+    ): PinnaSessionController = PinnaSessionController(
+        server = ControlStreamFakeLocalRoomServer(),
+        client = client,
+        playback = ControlStreamFakePlaybackController(),
+        voiceSource = source,
+        voiceSink = sink,
+        deviceId = deviceId,
         hostName = "host-1",
         scope = scope,
     ).also { controllers += it }
@@ -388,6 +471,7 @@ private class ControlStreamFakeClient(
         private set
     var disconnected = false
         private set
+    val sentMessages = mutableListOf<RoomControlMessage>()
 
     override suspend fun connect(endpoint: LocalRoomEndpoint, token: String): Result<RoomState> {
         connectCalls += 1
@@ -403,7 +487,10 @@ private class ControlStreamFakeClient(
         return openControlStreamResult
     }
 
-    override suspend fun send(message: RoomControlMessage): Result<Unit> = Result.success(Unit)
+    override suspend fun send(message: RoomControlMessage): Result<Unit> {
+        sentMessages += message
+        return Result.success(Unit)
+    }
 
     override suspend fun disconnect() {
         disconnected = true
@@ -412,6 +499,26 @@ private class ControlStreamFakeClient(
     suspend fun emit(message: RoomControlMessage) {
         controlMessages.emit(message)
     }
+}
+
+private class RecordingVoiceSink : VoiceSink {
+    val frames = mutableListOf<ByteArray>()
+    override fun play(pcm: ByteArray) { frames += pcm }
+    override fun release() = Unit
+}
+
+private class RecordingVoiceSource : VoiceSource {
+    var started = false
+        private set
+    private var onFrame: ((ByteArray) -> Unit)? = null
+    override fun start(onFrame: (ByteArray) -> Unit) {
+        started = true
+        this.onFrame = onFrame
+    }
+    override fun stop() {
+        started = false
+    }
+    fun emit(frame: ByteArray) = onFrame?.invoke(frame)
 }
 
 private class ControlStreamFakeLocalRoomServer : LocalRoomServer {

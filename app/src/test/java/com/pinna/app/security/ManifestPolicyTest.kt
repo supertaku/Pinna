@@ -21,10 +21,18 @@ class ManifestPolicyTest {
     }
 
     @Test
-    fun manifestDoesNotRequestMicrophoneOrBluetooth() {
-        assertFalse("RECORD_AUDIO must never be requested.", manifest.contains("RECORD_AUDIO"))
+    fun manifestForbidsBluetoothAndSystemAudioCapture() {
+        // RECORD_AUDIO is permitted only for push-to-talk; Bluetooth transport and system/third-party
+        // audio capture remain out of scope.
         assertFalse("Bluetooth transport permissions are out of scope.", manifest.contains("android.permission.BLUETOOTH"))
         assertFalse("System audio capture is out of scope.", manifest.contains("CAPTURE_AUDIO_OUTPUT"))
+        assertFalse("Media projection capture is out of scope.", manifest.contains("MediaProjection"))
+    }
+
+    @Test
+    fun microphoneIsOnlyForPushToTalk() {
+        // Exactly one microphone-related permission (RECORD_AUDIO); no always-on/background capture.
+        assertTrue(manifest.contains("android.permission.RECORD_AUDIO"))
     }
 
     @Test
