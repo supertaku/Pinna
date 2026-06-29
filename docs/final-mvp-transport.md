@@ -15,8 +15,9 @@ Out of scope remains:
 - Accounts, friend graph, public rooms, chat, moderation, cloud relay, remote internet rooms, iOS, web, Bluetooth transport, system-audio capture, and permanent listener downloads.
 
 > Scope addendum (post-MVP, by product decision): two features were added beyond the original MVP
-> boundary. (1) Host-side **link import** (YouTube → on-device audio extraction into app-private
-> storage) — sideload/F-Droid-only because it violates Google Play policy + YouTube ToS; see
+> boundary. (1) Host-side **link import**, split across build flavors: the Play-eligible `play` flavor
+> does license-clean direct-audio URL import only, while the sideload-only `full` flavor adds on-device
+> YouTube extraction (GPL-3.0, violates Google Play policy + YouTube ToS); see
 > docs/privacy-and-security.md. (2) **Push-to-talk** voice, which introduces microphone capture. These
 > intentionally relax the earlier "no streaming-service integrations / no microphone capture" exclusions.
 

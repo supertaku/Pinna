@@ -58,17 +58,23 @@ asserted by `ManifestPolicyTest`.
 - The room transport functions on a local network with no internet access (including the
   LocalOnlyHotspot fallback).
 
-## Link import (YouTube → audio)
+## Link import (two flavors)
 
-- Optional host-side feature: paste a link; the app resolves the best audio stream on-device with
-  NewPipeExtractor and downloads it over HTTPS into app-private storage. No account, API key, or
-  third-party server is involved.
-- **Distribution impact:** downloading/converting YouTube content violates Google Play policy and
-  YouTube's Terms of Service, so a build shipping this feature must be **sideload / F-Droid only**, not
-  Google Play. NewPipeExtractor is GPL-3.0, so its copyleft obligations apply to distribution.
-- Network egress for this feature goes to Google's video CDN over HTTPS. Imported audio is stored
-  app-private like any other imported track; no link, token, or source URL is persisted.
-- The feature is fragile by nature (it breaks when YouTube changes) and requires ongoing maintenance.
+Link import is split across build flavors so the Play build carries no legal/licensing risk:
+
+- **`play` flavor (all users):** paste a **direct HTTPS audio link** (podcast episode, Internet
+  Archive file, Creative-Commons host, the user's own cloud). The app verifies the response is audio
+  and downloads it into app-private storage — the same trust model as local file import (the user
+  supplies content they have the right to use). No extraction library, no GPL dependency, no
+  streaming-service scraping. This build is Google Play-eligible.
+- **`full` flavor (sideload / F-Droid only):** additionally resolves YouTube links on-device with
+  NewPipeExtractor and downloads the best audio stream over HTTPS. **Distribution impact:** this
+  violates Google Play policy and YouTube's Terms of Service, so it must not ship on Google Play;
+  NewPipeExtractor is GPL-3.0, so distributing this build means licensing Pinna under GPL-3.0 and
+  publishing source. It is also fragile (breaks when YouTube changes) and needs ongoing maintenance.
+
+In both cases imported audio is stored app-private like any other track; no link, token, or source URL
+is persisted. Remote downloads are HTTPS only (cleartext is reserved for the local room transport).
 
 ## LocalOnlyHotspot
 

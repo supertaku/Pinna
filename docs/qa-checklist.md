@@ -2,12 +2,20 @@
 
 ## Automated Commands
 
+Tasks are per build flavor (`play` = Play-eligible, `full` = sideload with YouTube):
+
 ```powershell
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat :app:compileDebugKotlin
-.\gradlew.bat :app:compileDebugAndroidTestKotlin
-.\gradlew.bat connectedDebugAndroidTest   # requires an attached device/emulator
+.\gradlew.bat testPlayDebugUnitTest
+.\gradlew.bat testFullDebugUnitTest
+.\gradlew.bat :app:compilePlayDebugKotlin
+.\gradlew.bat :app:compileFullDebugKotlin
+.\gradlew.bat :app:compilePlayDebugAndroidTestKotlin
+.\gradlew.bat :app:compileFullDebugAndroidTestKotlin
+.\gradlew.bat connectedPlayDebugAndroidTest   # requires an attached device/emulator
 ```
+
+Flavor guard: `:app:dependencies --configuration playDebugRuntimeClasspath` must contain **no**
+NewPipeExtractor; the `full` classpath must contain it.
 
 ## JVM Coverage Present
 
@@ -73,8 +81,10 @@ Scenarios:
 - host ends the room; listeners exit cleanly and the hotspot stops
 - manual output offset slider shifts listener timing as expected
 - Bluetooth output shows the route-latency warning
-- paste a YouTube link on the host; audio downloads into private storage and plays in the room
-  (sideload build only; requires network)
+- paste a direct audio link (podcast/Archive/CC) on the host in EITHER flavor; it downloads into
+  private storage and plays in the room (requires network)
+- paste a YouTube link in the `full` build; audio downloads and plays (sideload only; requires network)
+- paste a YouTube link in the `play` build; it fails cleanly with "not a direct audio file"
 - push-to-talk: hold the talk button on two devices; only one talker at a time; music ducks while
   someone talks and restores after; measure perceived voice latency
 - microphone permission is requested only on first talk and capture stops on release

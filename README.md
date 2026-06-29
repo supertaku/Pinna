@@ -24,9 +24,9 @@ Implemented:
 - local-room domain and protocol models
 - JVM, Room, and Compose tests for the highest-risk logic
 - app-private Storage Access Framework import copy flow
-- optional host-side link import (paste a YouTube link → on-device audio extraction via
-  NewPipeExtractor → download into app-private storage). Sideload/F-Droid-only: this violates Google
-  Play policy + YouTube ToS, and NewPipeExtractor is GPL-3.0. See docs/privacy-and-security.md.
+- host-side link import via two build flavors (see "Build flavors" below):
+  - **all flavors:** license-clean direct-audio URL import (podcast/Internet Archive/CC/own cloud), HTTPS only
+  - **full flavor only:** on-device YouTube audio extraction (NewPipeExtractor)
 - Room database persistence with startup hydration of imported tracks
 - Media3-backed playback controller with playback-speed nudges and buffered-position reporting
 - authenticated local HTTP room server/client
@@ -45,17 +45,33 @@ Implemented:
 Validated by automated tests and code review; multi-device audio sync requires the manual device
 matrix in [docs/qa-checklist.md](docs/qa-checklist.md) before release-candidate sign-off.
 
+## Build flavors
+
+Two product flavors on the `distribution` dimension:
+
+- **`play`** — Google Play-eligible. License-clean direct-audio URL import only; **no** YouTube
+  extraction and **no** GPL-licensed dependency linked.
+- **`full`** — sideload / F-Droid. Adds on-device YouTube audio extraction (NewPipeExtractor, GPL-3.0).
+  Distributing this build means licensing Pinna under GPL-3.0 and publishing source; it also carries
+  YouTube ToS / copyright risk. See [docs/privacy-and-security.md](docs/privacy-and-security.md).
+
+The YouTube code lives only in `app/src/full`, so the `play` runtime classpath contains no
+NewPipeExtractor.
+
 ## Build And Test
 
-This workspace includes the standard Gradle wrapper for Gradle 9.0.0.
+This workspace includes the standard Gradle wrapper for Gradle 9.0.0. Tasks are per-flavor:
 
 ```powershell
-.\gradlew.bat :app:compileDebugKotlin
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat connectedDebugAndroidTest
+.\gradlew.bat testPlayDebugUnitTest
+.\gradlew.bat testFullDebugUnitTest
+.\gradlew.bat :app:compilePlayDebugKotlin
+.\gradlew.bat :app:compileFullDebugKotlin
+.\gradlew.bat connectedPlayDebugAndroidTest   # requires a device/emulator
 ```
 
-`connectedDebugAndroidTest` currently verifies Android test APK packaging. Add instrumented tests before treating it as device behavior coverage.
+`connected*AndroidTest` currently verifies Android test APK packaging plus the Compose/Room tests; run
+the manual device matrix in [docs/qa-checklist.md](docs/qa-checklist.md) for real behavior coverage.
 
 ## Security And Privacy Defaults
 

@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Pinna</string>
+    <!-- Default (play flavor): license-clean direct audio links only. Overridden in the full flavor. -->
+    <string name="import_link_hint">Paste a direct audio link (podcast, Archive, your cloud)</string>
 </resources>

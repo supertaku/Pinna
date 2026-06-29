@@ -8,10 +8,8 @@ import com.pinna.app.connectivity.AndroidLocalHotspotCoordinator
 import com.pinna.app.connectivity.DefaultNetworkAddressProvider
 import com.pinna.app.library.AndroidTrackImporter
 import com.pinna.app.library.PinnaDatabase
+import com.pinna.app.library.RemoteImporterFactory
 import com.pinna.app.library.RoomTrackRepository
-import com.pinna.app.library.youtube.NewPipeYouTubeAudioResolver
-import com.pinna.app.library.youtube.OkHttpDownloader
-import com.pinna.app.library.youtube.YouTubeTrackImporter
 import okhttp3.OkHttpClient
 import com.pinna.app.network.HttpLocalRoomClient
 import com.pinna.app.network.HttpLocalRoomServer
@@ -38,11 +36,7 @@ class PinnaRuntime(context: Context) {
     private val client = HttpLocalRoomClient()
     private val importer = AndroidTrackImporter(appContext)
     private val httpClient = OkHttpClient()
-    private val remoteImporter = YouTubeTrackImporter(
-        context = appContext,
-        resolver = NewPipeYouTubeAudioResolver(OkHttpDownloader(httpClient)),
-        httpClient = httpClient,
-    )
+    private val remoteImporter = RemoteImporterFactory.create(appContext, httpClient)
     private val hotspotCoordinator = AndroidLocalHotspotCoordinator(appContext)
     private val voiceSource = AudioRecordVoiceSource()
     private val voiceSink = AudioTrackVoiceSink()

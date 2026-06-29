@@ -19,6 +19,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    flavorDimensions += "distribution"
+    productFlavors {
+        // Google Play-eligible: license-clean URL import only, no GPL / no YouTube extraction.
+        create("play") {
+            dimension = "distribution"
+        }
+        // Sideload / F-Droid: adds on-device YouTube audio import (NewPipeExtractor, GPL-3.0).
+        create("full") {
+            dimension = "distribution"
+            applicationIdSuffix = ".full"
+            versionNameSuffix = "-full"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -71,8 +85,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.3")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("com.google.zxing:core:3.5.4")
-    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.24.6")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // YouTube extraction (GPL-3.0) is only linked into the sideload "full" flavor.
+    "fullImplementation"("com.github.teamnewpipe:NewPipeExtractor:v0.24.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
     kapt("androidx.room:room-compiler:2.8.3")

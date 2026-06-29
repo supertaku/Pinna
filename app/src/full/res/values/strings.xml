@@ -1,0 +1,4 @@
+<resources>
+    <!-- Full flavor adds on-device YouTube extraction. -->
+    <string name="import_link_hint">Paste a YouTube or direct audio link</string>
+</resources>

@@ -46,6 +46,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import com.pinna.app.R
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -184,7 +186,7 @@ private fun HostSetupScreen(
                 OutlinedTextField(
                     value = linkText,
                     onValueChange = { linkText = it },
-                    label = { Text("Paste a YouTube link") },
+                    label = { Text(stringResource(R.string.import_link_hint)) },
                     singleLine = true,
                     enabled = !state.isBusy,
                     modifier = Modifier
