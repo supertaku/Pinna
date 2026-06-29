@@ -16,6 +16,7 @@ import com.pinna.app.network.HttpLocalRoomServer
 import com.pinna.app.network.LocalRoomClient
 import com.pinna.app.network.LocalRoomEndpoint
 import com.pinna.app.network.LocalRoomServer
+import com.pinna.app.network.ReconnectBackoff
 import com.pinna.app.playback.PlaybackController
 import com.pinna.app.protocol.RoomControlMessage
 import com.pinna.app.qr.QrDecodeResult
@@ -48,6 +49,7 @@ import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicLong
 import java.util.UUID
 import kotlin.math.roundToLong
+import kotlin.random.Random
 
 class PinnaSessionController(
     private val server: LocalRoomServer,
@@ -61,6 +63,8 @@ class PinnaSessionController(
     private val hostStartLeadNanos: Long = HOST_START_LEAD_NANOS,
     private val syncSampleIntervalMs: Long = SYNC_SAMPLE_INTERVAL_MS,
     private val audioRouteProvider: () -> AudioRoute = { AudioRoute.UNKNOWN },
+    private val reconnectBaseMs: Long = RECONNECT_BASE_MS,
+    private val reconnectMaxAttempts: Int = RECONNECT_MAX_ATTEMPTS,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val _state = MutableStateFlow(PinnaAppState())
@@ -70,8 +74,13 @@ class PinnaSessionController(
     private var syncJob: Job? = null
     private var hostStartJob: Job? = null
     private var hostRoomJob: Job? = null
+    private var reconnectJob: Job? = null
     @Volatile
     private var listenerSync: ListenerSyncController? = null
+    @Volatile
+    private var listenerEndpoint: LocalRoomEndpoint? = null
+    @Volatile
+    private var listenerToken: String? = null
     private val listenerSessionId = AtomicLong(0)
     private val joinAttemptId = AtomicLong(0)
 
@@ -419,7 +428,11 @@ class PinnaSessionController(
         syncJob = null
         streamStateJob?.cancel()
         streamStateJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
         listenerSync = null
+        listenerEndpoint = null
+        listenerToken = null
     }
 
     private fun nextListenerSessionId(): Long {
@@ -601,6 +614,8 @@ class PinnaSessionController(
 
     private fun startListenerSync(endpoint: LocalRoomEndpoint, token: String, sessionId: Long) {
         listenerSync = ListenerSyncController(playback)
+        listenerEndpoint = endpoint
+        listenerToken = token
         _state.update {
             if (!isActiveListenerSession(sessionId)) return@update it
             it.copy(listenerSync = it.listenerSync.copy(
@@ -613,9 +628,18 @@ class PinnaSessionController(
             ))
         }
         streamStateJob = scope.launch {
+            var wasConnected = false
             client.controlStreamState.collect { streamState ->
-                if (isActiveListenerSession(sessionId)) {
+                if (!isActiveListenerSession(sessionId)) return@collect
+                if (streamState !is ControlStreamState.Reconnecting) {
                     _state.update { it.copy(controlStreamState = streamState) }
+                }
+                when (streamState) {
+                    is ControlStreamState.Connected -> wasConnected = true
+                    is ControlStreamState.Disconnected,
+                    is ControlStreamState.Failed,
+                    -> if (wasConnected) scheduleReconnect(endpoint, token, sessionId)
+                    else -> Unit
                 }
             }
         }
@@ -666,6 +690,52 @@ class PinnaSessionController(
         }
     }
 
+    /**
+     * Reconnects the listener control stream after a transient drop. Retries with jittered exponential
+     * backoff, re-fetches `/room`, resumes the WebSocket, and restarts playback if the host is playing.
+     * Stale events are ignored by the reducer's sequence freshness. Single-flight per drop.
+     */
+    private fun scheduleReconnect(endpoint: LocalRoomEndpoint, token: String, sessionId: Long) {
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = scope.launch {
+            var attempt = 1
+            while (isActiveListenerSession(sessionId) && attempt <= reconnectMaxAttempts) {
+                if (client.controlStreamState.value is ControlStreamState.Connected) return@launch
+                val jitter = Random.nextLong(0, (reconnectBaseMs / 2) + 1)
+                val delayMs = ReconnectBackoff.delayMs(attempt, baseMs = reconnectBaseMs) + jitter
+                _state.update {
+                    if (isActiveListenerSession(sessionId)) {
+                        it.copy(controlStreamState = ControlStreamState.Reconnecting(attempt, delayMs))
+                    } else {
+                        it
+                    }
+                }
+                delay(delayMs)
+                if (!isActiveListenerSession(sessionId)) return@launch
+                val room = client.connect(endpoint, token).getOrNull()
+                if (room != null && isActiveListenerSession(sessionId)) {
+                    val listenerRoom = room.copy(queue = room.queue.map { it.toNetworkVisibleTrack() })
+                    _state.update {
+                        if (isActiveListenerSession(sessionId)) {
+                            it.copy(listenerRoomState = listenerRoom, errorMessage = null)
+                        } else {
+                            it
+                        }
+                    }
+                    val opened = ensureListenerControlStreamOpen(endpoint, token)
+                    if (opened.isSuccess && isActiveListenerSession(sessionId)) {
+                        maybeStartListenerPlayback(endpoint, token, listenerRoom, sessionId)
+                        return@launch
+                    }
+                }
+                attempt++
+            }
+            if (isActiveListenerSession(sessionId)) {
+                _state.update { it.copy(errorMessage = "Lost connection to the room. Rejoin to continue.") }
+            }
+        }
+    }
+
     private fun scheduleHostStart(trackId: String, uri: String, room: RoomState) {
         hostStartJob?.cancel()
         hostStartJob = scope.launch {
@@ -679,6 +749,8 @@ class PinnaSessionController(
     companion object {
         const val HOST_START_LEAD_NANOS: Long = 2_000_000_000
         const val SYNC_SAMPLE_INTERVAL_MS: Long = 2_000
+        const val RECONNECT_BASE_MS: Long = 500
+        const val RECONNECT_MAX_ATTEMPTS: Int = 6
     }
 }
 

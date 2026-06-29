@@ -25,6 +25,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Test
 
@@ -262,6 +263,25 @@ class PinnaSessionControllerControlStreamTest {
     }
 
     @Test
+    fun controlStreamDropTriggersReconnect() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
+        val controller = newController(client = client)
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+        val opensAfterJoin = client.openControlStreamCalls
+
+        // Simulate a transient drop, then advance past the first backoff window.
+        client.controlStreamState.value = ControlStreamState.Disconnected
+        scope.runCurrent()
+        scope.testScheduler.advanceTimeBy(900)
+        scope.runCurrent()
+
+        assertTrue(client.openControlStreamCalls > opensAfterJoin)
+        assertEquals(ControlStreamState.Connected, controller.state.value.controlStreamState)
+        assertEquals(PinnaScreen.ListenerRoom, controller.state.value.screen)
+    }
+
+    @Test
     fun streamErrorMessageIsSurfaced() = runBlocking {
         val client = ControlStreamFakeClient(room(sequenceNumber = 1))
         val controller = newController(client = client)
@@ -362,13 +382,21 @@ private class ControlStreamFakeClient(
     override val controlStreamState = MutableStateFlow<ControlStreamState>(ControlStreamState.Disconnected)
     var openedStream = false
         private set
+    var openControlStreamCalls = 0
+        private set
+    var connectCalls = 0
+        private set
     var disconnected = false
         private set
 
-    override suspend fun connect(endpoint: LocalRoomEndpoint, token: String): Result<RoomState> = Result.success(roomState)
+    override suspend fun connect(endpoint: LocalRoomEndpoint, token: String): Result<RoomState> {
+        connectCalls += 1
+        return Result.success(roomState)
+    }
 
     override suspend fun openControlStream(endpoint: LocalRoomEndpoint, token: String): Result<Unit> {
         openedStream = true
+        openControlStreamCalls += 1
         openControlStreamResult
             .onSuccess { controlStreamState.value = ControlStreamState.Connected }
             .onFailure { controlStreamState.value = ControlStreamState.Failed(it.message ?: "Control stream failed.") }
