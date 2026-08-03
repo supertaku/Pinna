@@ -6,6 +6,10 @@ import { landingConfig } from "../lib/landing-config";
 import { buildBeatIntervals, getDocumentProgress, sampleBeat } from "../lib/scroll-math";
 
 const intervals = buildBeatIntervals(landingConfig.beats);
+const AUTO_SCROLL_SPEED = 40;
+const AUTO_SCROLL_IDLE_MS = 1800;
+const AUTO_SCROLL_START_DELAY_MS = 700;
+const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "]);
 
 class RoomSound {
   private audio: HTMLAudioElement;
@@ -121,6 +125,61 @@ export function PinnaExperience() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => {
+    if (introOpen || reducedMotion) return;
+
+    let frame = 0;
+    let lastFrame = performance.now();
+    let autoPosition = window.scrollY;
+    let resumeAt = lastFrame + AUTO_SCROLL_START_DELAY_MS;
+
+    const pauseForUser = () => {
+      autoPosition = window.scrollY;
+      resumeAt = performance.now() + AUTO_SCROLL_IDLE_MS;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) pauseForUser();
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.buttons) pauseForUser();
+    };
+    const tick = (now: number) => {
+      const elapsed = Math.min(now - lastFrame, 50);
+      lastFrame = now;
+
+      const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      if (!document.hidden && now >= resumeAt && window.scrollY < maxScroll) {
+        autoPosition = Math.max(autoPosition, window.scrollY);
+        autoPosition = Math.min(maxScroll, autoPosition + (AUTO_SCROLL_SPEED * elapsed) / 1000);
+        window.scrollTo({ top: autoPosition, left: 0, behavior: "auto" });
+      } else {
+        autoPosition = window.scrollY;
+      }
+
+      frame = requestAnimationFrame(tick);
+    };
+
+    window.addEventListener("wheel", pauseForUser, { passive: true });
+    window.addEventListener("touchstart", pauseForUser, { passive: true });
+    window.addEventListener("touchmove", pauseForUser, { passive: true });
+    window.addEventListener("pointerdown", pauseForUser, { passive: true });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerup", pauseForUser, { passive: true });
+    window.addEventListener("keydown", onKeyDown);
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("wheel", pauseForUser);
+      window.removeEventListener("touchstart", pauseForUser);
+      window.removeEventListener("touchmove", pauseForUser);
+      window.removeEventListener("pointerdown", pauseForUser);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", pauseForUser);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [introOpen, reducedMotion]);
 
   useEffect(() => {
     const playback = new RoomSound(landingConfig.audioUrl);
