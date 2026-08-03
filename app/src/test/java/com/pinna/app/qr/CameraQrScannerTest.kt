@@ -26,7 +26,7 @@ class CameraQrScannerTest {
             port = 1235,
             token = "token-2",
             expiresAtEpochMillis = 2_000,
-            fingerprint = "local-room-2",
+            fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
         ),
     )
 

@@ -5,6 +5,12 @@ import com.pinna.app.core.time.ClockSyncSample
 import com.pinna.app.core.time.SyncClockModel
 import com.pinna.app.playback.PlaybackController
 import com.pinna.app.protocol.RoomControlMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Owns the per-listener clock model and drift-correction loop. The host answers each
@@ -19,8 +25,10 @@ class ListenerSyncController(
     private val clockModel: SyncClockModel = SyncClockModel(),
     private val maxRoundTripNanos: Long = 200_000_000,
     private val nowClientNanos: () -> Long = System::nanoTime,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val engine = SyncEngine(playback)
+    private var nudgeResetJob: Job? = null
 
     var correctionCount: Int = 0
         private set
@@ -65,6 +73,13 @@ class ListenerSyncController(
         lastDriftMs = playback.snapshots.value.positionMs - target
         val action = engine.correctDrift(timeline, estimatedHostNow, manualOffsetMs)
         lastAction = action
+        when (action) {
+            DriftAction.NUDGE_SPEED -> scheduleNudgeReset()
+            DriftAction.SEEK,
+            DriftAction.REBUFFER,
+            -> cancelNudgeReset()
+            DriftAction.IGNORE -> Unit
+        }
         if (action != DriftAction.IGNORE) correctionCount++
         return action
     }
@@ -75,4 +90,28 @@ class ListenerSyncController(
             lastAction = lastAction,
             isReady = isReady,
         )
+
+    fun cancelPendingCorrections() {
+        cancelNudgeReset(resetPlaybackSpeed = true)
+    }
+
+    private fun scheduleNudgeReset() {
+        nudgeResetJob?.cancel()
+        nudgeResetJob = scope.launch {
+            delay(NUDGE_RESET_DELAY_MS)
+            playback.setPlaybackSpeed(1.0f)
+            nudgeResetJob = null
+        }
+    }
+
+    private fun cancelNudgeReset(resetPlaybackSpeed: Boolean = false) {
+        val hadPendingReset = nudgeResetJob != null
+        nudgeResetJob?.cancel()
+        nudgeResetJob = null
+        if (resetPlaybackSpeed && hadPendingReset) playback.setPlaybackSpeed(1.0f)
+    }
+
+    companion object {
+        const val NUDGE_RESET_DELAY_MS: Long = 1_500
+    }
 }

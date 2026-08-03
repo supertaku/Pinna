@@ -6,6 +6,7 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -13,6 +14,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import com.pinna.app.core.model.PlaybackState
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
@@ -34,8 +37,11 @@ class Media3PlaybackController(context: Context) : PlaybackController {
         .build()
     private val mediaSession = MediaSession.Builder(appContext, player).build()
     private val _snapshots = MutableStateFlow(PlaybackSnapshot())
+    private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    private var preparedTrackId: String? = null
 
     override val snapshots: StateFlow<PlaybackSnapshot> = _snapshots
+    override val errors: SharedFlow<String> = _errors
 
     init {
         PlaybackServiceHolder.session = mediaSession
@@ -48,11 +54,16 @@ class Media3PlaybackController(context: Context) : PlaybackController {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     publishSnapshot()
                 }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    _errors.tryEmit("Could not play this track. Check the file or room connection and try again.")
+                    publishSnapshot(stateOverride = PlaybackState.PAUSED)
+                }
             },
         )
     }
 
-    override fun play(trackId: String, uri: String, positionMs: Long, requestHeaders: Map<String, String>) {
+    override fun prepare(trackId: String, uri: String, positionMs: Long, requestHeaders: Map<String, String>) {
         httpDataSourceFactory.setDefaultRequestProperties(requestHeaders)
         val mediaUri = if (uri.startsWith("http://") || uri.startsWith("https://") || uri.startsWith("content://")) {
             uri
@@ -61,6 +72,24 @@ class Media3PlaybackController(context: Context) : PlaybackController {
         }
         player.setMediaItem(MediaItem.fromUri(mediaUri))
         player.prepare()
+        player.seekTo(positionMs)
+        player.pause()
+        preparedTrackId = trackId
+        _snapshots.value = PlaybackSnapshot(PlaybackState.BUFFERING, trackId, positionMs)
+    }
+
+    override fun play(trackId: String, uri: String, positionMs: Long, requestHeaders: Map<String, String>) {
+        prepare(trackId, uri, positionMs, requestHeaders)
+        player.play()
+        ensurePlaybackServiceStarted()
+        _snapshots.value = PlaybackSnapshot(PlaybackState.PLAYING, trackId, positionMs)
+    }
+
+    override fun playPrepared(trackId: String, uri: String, positionMs: Long, requestHeaders: Map<String, String>) {
+        if (preparedTrackId != trackId) {
+            play(trackId, uri, positionMs, requestHeaders)
+            return
+        }
         player.seekTo(positionMs)
         player.play()
         ensurePlaybackServiceStarted()
@@ -72,18 +101,35 @@ class Media3PlaybackController(context: Context) : PlaybackController {
         publishSnapshot(stateOverride = PlaybackState.PAUSED)
     }
 
+    override fun resume() {
+        player.play()
+        ensurePlaybackServiceStarted()
+        publishSnapshot(stateOverride = PlaybackState.PLAYING)
+    }
+
     override fun seekTo(positionMs: Long) {
         player.seekTo(positionMs)
         _snapshots.value = _snapshots.value.copy(positionMs = positionMs)
     }
 
+    override fun currentPositionMs(): Long = player.currentPosition.coerceAtLeast(0)
+
     override fun setPlaybackSpeed(speed: Float) {
         player.setPlaybackSpeed(speed)
     }
 
+    override fun setVolumeMultiplier(multiplier: Float) {
+        player.volume = multiplier.coerceIn(0f, 1f)
+    }
+
     override fun stop() {
         player.stop()
+        player.setPlaybackSpeed(1f)
+        player.volume = 1f
+        httpDataSourceFactory.setDefaultRequestProperties(emptyMap())
+        preparedTrackId = null
         _snapshots.value = PlaybackSnapshot()
+        runCatching { appContext.stopService(Intent(appContext, PinnaPlaybackService::class.java)) }
     }
 
     fun release() {
@@ -101,6 +147,8 @@ class Media3PlaybackController(context: Context) : PlaybackController {
                 appContext,
                 Intent(appContext, PinnaPlaybackService::class.java),
             )
+        }.onFailure {
+            _errors.tryEmit("Playback started, but Android could not enable background playback.")
         }
     }
 

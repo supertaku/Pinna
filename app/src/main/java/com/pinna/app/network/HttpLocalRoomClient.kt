@@ -31,10 +31,13 @@ class HttpLocalRoomClient : LocalRoomClient {
         const val CONTROL_HANDSHAKE_TIMEOUT_MS = 3_000
     }
 
+    @Volatile
     private var endpoint: LocalRoomEndpoint? = null
+    @Volatile
     private var token: String? = null
     private var controlSocket: Socket? = null
     private val controlStreamGeneration = AtomicLong(0)
+    private val connectionGeneration = AtomicLong(0)
     private val controlStreamLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _controlMessages = MutableSharedFlow<RoomControlMessage>(extraBufferCapacity = 32)
@@ -45,11 +48,17 @@ class HttpLocalRoomClient : LocalRoomClient {
 
     override suspend fun connect(endpoint: LocalRoomEndpoint, token: String): Result<RoomState> =
         withContext(Dispatchers.IO) {
+            val generation = connectionGeneration.incrementAndGet()
             runCatching {
                 val body = request("GET", endpoint, "/room", token)
-                this@HttpLocalRoomClient.endpoint = endpoint
-                this@HttpLocalRoomClient.token = token
                 val room = RoomHttpRoutes.decodeRoomState(body)
+                require(room.roomId == endpoint.roomId) { "Room identity did not match the scanned payload." }
+                require(room.hostDeviceId.isNotBlank()) { "Room response is missing its host identity." }
+                synchronized(controlStreamLock) {
+                    require(connectionGeneration.get() == generation) { "Room connection was superseded." }
+                    this@HttpLocalRoomClient.endpoint = endpoint
+                    this@HttpLocalRoomClient.token = token
+                }
                 room
             }
         }
@@ -125,12 +134,18 @@ class HttpLocalRoomClient : LocalRoomClient {
 
     override suspend fun disconnect() {
         synchronized(controlStreamLock) {
+            connectionGeneration.incrementAndGet()
             controlStreamGeneration.incrementAndGet()
             closeControlSocketLocked()
         }
         _controlStreamState.value = ControlStreamState.Disconnected
         endpoint = null
         token = null
+    }
+
+    override suspend fun shutdown() {
+        disconnect()
+        scope.cancel()
     }
 
     suspend fun fetchHostTimeNanos(): Result<Long> =
@@ -198,17 +213,21 @@ class HttpLocalRoomClient : LocalRoomClient {
         body: String? = null,
     ): String {
         val connection = URL("http://${endpoint.host}:${endpoint.port}$path").openConnection() as HttpURLConnection
-        connection.requestMethod = method
-        connection.connectTimeout = HTTP_TIMEOUT_MS
-        connection.readTimeout = HTTP_TIMEOUT_MS
-        connection.setRequestProperty("Authorization", "Bearer $token")
-        if (body != null) {
-            connection.doOutput = true
-            connection.outputStream.use { it.write(body.encodeToByteArray()) }
+        return try {
+            connection.requestMethod = method
+            connection.connectTimeout = HTTP_TIMEOUT_MS
+            connection.readTimeout = HTTP_TIMEOUT_MS
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            if (body != null) {
+                connection.doOutput = true
+                connection.outputStream.use { it.write(body.encodeToByteArray()) }
+            }
+            val code = connection.responseCode
+            if (code !in 200..299) error("Room request failed with HTTP $code")
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
         }
-        val code = connection.responseCode
-        if (code !in 200..299) error("Room request failed with HTTP $code")
-        return connection.inputStream.bufferedReader().use { it.readText() }
     }
 
     private data class HttpHead(val code: Int, val headers: Map<String, String>)

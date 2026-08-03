@@ -115,7 +115,8 @@ Scenarios:
 
 ## Release Blockers
 
-- any request for `RECORD_AUDIO`
+- `RECORD_AUDIO` requested before the user's first explicit push-to-talk action, capture continuing
+  after release, or microphone use outside an active room
 - any third-party music capture
 - listener cache visible in public storage
 - QR token in logs, screenshots, filenames, or crash payloads

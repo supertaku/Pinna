@@ -21,7 +21,7 @@ class RoomTrackRepositoryTest {
     @Test
     fun saveTrackPersistsMetadataAndLoadTracksReturnsDomainTracks() = runBlocking {
         val dao = FakeTrackDao()
-        val repository = RoomTrackRepository(dao = dao, fileDeleter = { true })
+        val repository = RoomTrackRepository(dao = dao, fileExists = { true }, fileDeleter = { true })
 
         repository.saveTrack(track, nowEpochMillis = 1_000)
         val loaded = repository.loadTracks()
@@ -66,6 +66,18 @@ class RoomTrackRepositoryTest {
 
         assertFalse(deleted)
         assertEquals(listOf(TrackEntity.fromTrack(track, createdAtEpochMillis = 1_000, lastPlayedAtEpochMillis = 1_000)), dao.entities)
+    }
+
+    @Test
+    fun loadTracksPrunesMetadataWhenPrivateFileIsMissing() = runBlocking {
+        val dao = FakeTrackDao()
+        val repository = RoomTrackRepository(dao = dao, fileExists = { false }, fileDeleter = { true })
+        repository.saveTrack(track, nowEpochMillis = 1_000)
+
+        val loaded = repository.loadTracks()
+
+        assertTrue(loaded.isEmpty())
+        assertTrue(dao.entities.isEmpty())
     }
 }
 

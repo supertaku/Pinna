@@ -117,6 +117,9 @@ class HttpLocalRoomServerControlStreamTest {
 
         TestControlStreamConnection.open(endpoint, token = "token-123").use { talker ->
             TestControlStreamConnection.open(endpoint, token = "token-123").use { other ->
+                val start = RoomControlMessage.StartTalk("listener-1")
+                talker.send(start)
+                assertEquals(start, other.readMessage())
                 talker.send(voice)
 
                 assertEquals(voice, other.readMessage())
@@ -136,6 +139,33 @@ class HttpLocalRoomServerControlStreamTest {
             assertEquals(PlaybackState.IDLE, room.playback)
             assertEquals(0, room.sequenceNumber)
             assertTrue(room.listeners.isEmpty())
+        }
+    }
+
+    @Test
+    fun pushToTalkRejectsSecondTalkerAndReplayedFrames() = runBlocking {
+        val server = newStartedServer()
+        val endpoint = server.endpoint!!
+        val firstVoice = RoomControlMessage.Voice("listener-1", sequence = 1, pcmBase64 = "AQ==")
+        val nextVoice = RoomControlMessage.Voice("listener-1", sequence = 2, pcmBase64 = "Ag==")
+
+        TestControlStreamConnection.open(endpoint, token = "token-123").use { first ->
+            TestControlStreamConnection.open(endpoint, token = "token-123").use { second ->
+                TestControlStreamConnection.open(endpoint, token = "token-123").use { observer ->
+                    val start = RoomControlMessage.StartTalk("listener-1")
+                    first.send(start)
+                    assertEquals(start, observer.readMessage())
+
+                    second.send(RoomControlMessage.StartTalk("listener-2"))
+                    second.send(RoomControlMessage.Voice("listener-2", sequence = 1, pcmBase64 = "Aw=="))
+                    first.send(firstVoice)
+                    assertEquals(firstVoice, observer.readMessage())
+
+                    first.send(firstVoice)
+                    first.send(nextVoice)
+                    assertEquals(nextVoice, observer.readMessage())
+                }
+            }
         }
     }
 

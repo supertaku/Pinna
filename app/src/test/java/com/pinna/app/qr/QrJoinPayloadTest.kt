@@ -15,7 +15,7 @@ class QrJoinPayloadTest {
             port = 48732,
             token = "secret-token",
             expiresAtEpochMillis = 2_000,
-            fingerprint = "abc123",
+            fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
         )
 
         val encoded = QrJoinPayloadCodec.encode(payload)
@@ -41,7 +41,7 @@ class QrJoinPayloadTest {
                 port = 48732,
                 token = "secret-token",
                 expiresAtEpochMillis = 999,
-                fingerprint = "abc123",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
 
@@ -60,7 +60,7 @@ class QrJoinPayloadTest {
                 port = 48732,
                 token = "secret-token",
                 expiresAtEpochMillis = 1_000,
-                fingerprint = "abc123",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
 
@@ -94,12 +94,21 @@ class QrJoinPayloadTest {
             port = 48732,
             token = "secret-token",
             expiresAtEpochMillis = 2_000,
-            fingerprint = "abc123",
+            fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
         )
 
         val redacted = payload.redactedForLogs()
 
         assertFalse(redacted.contains("secret-token"))
         assertTrue(redacted.contains("room-123"))
+    }
+
+    @Test
+    fun unknownFingerprintIsRejected() {
+        val encoded = "pinna://join?v=1&room=room-123&host=192.168.1.8&port=48732&token=secret-token&exp=2000&fp=other-app"
+
+        val decoded = QrJoinPayloadCodec.decode(encoded, nowEpochMillis = 1_000)
+
+        assertEquals(QrDecodeResult.Invalid("Room QR fingerprint is not recognized."), decoded)
     }
 }

@@ -1,6 +1,7 @@
 package com.pinna.app.ui
 
 import android.Manifest
+import android.content.ClipData
 import android.content.pm.PackageManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -43,12 +44,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import com.pinna.app.R
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -82,7 +83,7 @@ fun PinnaApp(controller: PinnaSessionController) {
             PinnaScreen.Home -> HomeScreen(
                 onHost = { controller.show(PinnaScreen.HostSetup) },
                 onJoin = { controller.show(PinnaScreen.Scanner) },
-                onDiagnostics = { controller.show(PinnaScreen.Diagnostics) },
+                onDiagnostics = controller::showDiagnostics,
             )
             PinnaScreen.HostSetup -> HostSetupScreen(
                 state = state,
@@ -91,13 +92,18 @@ fun PinnaApp(controller: PinnaSessionController) {
                 onImportFromUrl = { url -> controller.importFromUrl(url) },
                 onCreateWifiRoom = { scope.launch { controller.createRoom() } },
                 onCreateHotspotRoom = { scope.launch { controller.createRoom(useHotspot = true) } },
+                onHotspotPermissionDenied = controller::reportHotspotPermissionDenied,
             )
             PinnaScreen.HostRoom -> HostRoomScreen(
                 state = state,
                 localDeviceId = controller.localDeviceId,
                 onPlayPause = { scope.launch { controller.playPause() } },
+                onSeekBack = { scope.launch { controller.seekHostBy(-10_000) } },
+                onSeekForward = { scope.launch { controller.seekHostBy(10_000) } },
+                onPrevious = { scope.launch { controller.skipHostTrack(-1) } },
+                onNext = { scope.launch { controller.skipHostTrack(1) } },
                 onEndRoom = { scope.launch { controller.endRoom() } },
-                onDiagnostics = { controller.show(PinnaScreen.Diagnostics) },
+                onDiagnostics = controller::showDiagnostics,
                 onStartTalk = { controller.startTalking() },
                 onStopTalk = { controller.stopTalking() },
             )
@@ -116,7 +122,7 @@ fun PinnaApp(controller: PinnaSessionController) {
                 state = state,
                 localDeviceId = controller.localDeviceId,
                 onLeave = { scope.launch { controller.leaveRoom() } },
-                onDiagnostics = { controller.show(PinnaScreen.Diagnostics) },
+                onDiagnostics = controller::showDiagnostics,
                 onManualOffsetChange = { controller.setManualOffsetMs(it) },
                 onResetOffset = { controller.resetManualOffset() },
                 onStartTalk = { controller.startTalking() },
@@ -124,7 +130,7 @@ fun PinnaApp(controller: PinnaSessionController) {
             )
             PinnaScreen.Diagnostics -> DiagnosticsScreen(
                 state = state,
-                onBack = { controller.show(PinnaScreen.Home) },
+                onBack = controller::closeDiagnostics,
             )
         }
 
@@ -162,8 +168,21 @@ private fun HostSetupScreen(
     onImportFromUrl: (String) -> Unit,
     onCreateWifiRoom: () -> Unit,
     onCreateHotspotRoom: () -> Unit,
+    onHotspotPermissionDenied: () -> Unit,
 ) {
     var linkText by rememberSaveable { mutableStateOf("") }
+    val missingHotspotPermissions = (state.hotspotState as? LocalHotspotState.PermissionRequired)
+        ?.missingPermissions
+        .orEmpty()
+    val hotspotPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        if (missingHotspotPermissions.all { results[it] == true }) {
+            onCreateHotspotRoom()
+        } else {
+            onHotspotPermissionDenied()
+        }
+    }
     Scaffold(topBar = { LargeTopAppBar(title = { Text("Host setup") }) }) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding),
@@ -220,7 +239,13 @@ private fun HostSetupScreen(
                     Text("Create room on Wi-Fi")
                 }
                 OutlinedButton(
-                    onClick = onCreateHotspotRoom,
+                    onClick = {
+                        if (missingHotspotPermissions.isEmpty()) {
+                            onCreateHotspotRoom()
+                        } else {
+                            hotspotPermissionLauncher.launch(missingHotspotPermissions.toTypedArray())
+                        }
+                    },
                     enabled = state.canCreateRoom && state.isHotspotAvailable,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -241,6 +266,10 @@ private fun HostRoomScreen(
     state: PinnaAppState,
     localDeviceId: String,
     onPlayPause: () -> Unit,
+    onSeekBack: () -> Unit,
+    onSeekForward: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     onEndRoom: () -> Unit,
     onDiagnostics: () -> Unit,
     onStartTalk: () -> Unit,
@@ -250,7 +279,12 @@ private fun HostRoomScreen(
     val room = state.hostRoomState
     val currentTrack = room?.currentTrack()
     val isPlaying = room?.playback == PlaybackState.PLAYING
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+
+    fun copy(label: String, value: String) {
+        scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(label, value))) }
+    }
 
     Scaffold(topBar = { LargeTopAppBar(title = { Text("Room live") }) }) { padding ->
         Column(
@@ -271,10 +305,10 @@ private fun HostRoomScreen(
                         Text("SSID: ${session.ssid}", modifier = Modifier.testTag("hotspot-ssid"))
                         Text("Password: ${session.passphrase}", modifier = Modifier.testTag("hotspot-passphrase"))
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(session.ssid)) }) {
+                            OutlinedButton(onClick = { copy("Pinna hotspot SSID", session.ssid) }) {
                                 Text("Copy SSID")
                             }
-                            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(session.passphrase)) }) {
+                            OutlinedButton(onClick = { copy("Pinna hotspot password", session.passphrase) }) {
                                 Text("Copy password")
                             }
                         }
@@ -298,6 +332,22 @@ private fun HostRoomScreen(
                     Text("Show QR")
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPrevious, enabled = room?.queue?.size.orZero() > 1) {
+                    Text("Previous")
+                }
+                OutlinedButton(onClick = onNext, enabled = room?.queue?.size.orZero() > 1) {
+                    Text("Next")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onSeekBack, enabled = currentTrack != null) {
+                    Text("-10s")
+                }
+                OutlinedButton(onClick = onSeekForward, enabled = currentTrack != null) {
+                    Text("+10s")
+                }
+            }
             PushToTalkButton(
                 talkerDeviceId = state.talkerDeviceId,
                 localDeviceId = localDeviceId,
@@ -319,7 +369,7 @@ private fun HostRoomScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(payload)) }) {
+                OutlinedButton(onClick = { copy("Pinna room payload", payload) }) {
                     Text("Copy payload")
                 }
             },
@@ -604,3 +654,5 @@ private fun DiagnosticsRow(label: String, value: String, isHealthy: Boolean) {
 private fun RoomState.currentTrack(): Track? {
     return currentTrackId?.let { id -> queue.firstOrNull { it.id == id } } ?: queue.firstOrNull()
 }
+
+private fun Int?.orZero(): Int = this ?: 0

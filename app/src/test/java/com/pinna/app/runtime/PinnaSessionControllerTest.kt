@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package com.pinna.app.runtime
 
 import com.pinna.app.core.model.PlaybackState
@@ -52,6 +54,19 @@ class PinnaSessionControllerTest {
 
         assertEquals(listOf(track), controller.state.value.importedTracks)
         assertTrue(controller.state.value.canCreateRoom)
+    }
+
+    @Test
+    fun diagnosticsReturnsToActiveRoomInsteadOfStrandingSession() = runBlocking {
+        val controller = newController()
+        controller.addImportedTracks(listOf(track))
+        controller.createRoom()
+
+        controller.showDiagnostics()
+        controller.closeDiagnostics()
+
+        assertEquals(PinnaScreen.HostRoom, controller.state.value.screen)
+        assertNotNull(controller.state.value.hostRoomState)
     }
 
     @Test
@@ -203,6 +218,16 @@ class PinnaSessionControllerTest {
     }
 
     @Test
+    fun hotspotPermissionRequirementIsExposedBeforeStart() {
+        val required = LocalHotspotState.PermissionRequired(setOf("android.permission.NEARBY_WIFI_DEVICES"))
+        val controller = newController(hotspot = FakeLocalHotspotCoordinator(initialState = required))
+
+        assertEquals(required, controller.state.value.hotspotState)
+        controller.reportHotspotPermissionDenied()
+        assertEquals("Nearby Wi-Fi permission is required to start a phone hotspot.", controller.state.value.errorMessage)
+    }
+
+    @Test
     fun createRoomServerFailureReturnsUiError() = runBlocking {
         val server = FakeLocalRoomServer(startFailure = IllegalStateException("bind failed"))
         val controller = newController(server = server)
@@ -213,6 +238,24 @@ class PinnaSessionControllerTest {
         assertEquals(PinnaScreen.HostSetup, controller.state.value.screen)
         assertEquals("Could not start room: bind failed", controller.state.value.errorMessage)
         assertEquals(null, controller.state.value.hostEndpoint)
+    }
+
+    @Test
+    fun hostSeekAndTrackSkipBroadcastAuthoritativeControls() = runBlocking {
+        val secondTrack = track.copy(id = "track-2", title = "Second", localUri = "C:/tmp/second.mp3")
+        val server = FakeLocalRoomServer()
+        val controller = newController(server = server)
+        controller.addImportedTracks(listOf(track, secondTrack))
+        controller.createRoom()
+
+        controller.seekHostBy(10_000)
+        controller.skipHostTrack(1)
+
+        val seek = server.broadcasts.filterIsInstance<RoomControlMessage.Seek>().single()
+        val play = server.broadcasts.filterIsInstance<RoomControlMessage.Play>().single()
+        assertEquals(track.durationMs, seek.positionMs)
+        assertEquals(secondTrack.id, play.trackId)
+        assertEquals(secondTrack.id, controller.state.value.hostRoomState?.currentTrackId)
     }
 
     @Test
@@ -228,6 +271,10 @@ class PinnaSessionControllerTest {
         assertEquals(null, controller.state.value.hostEndpoint)
         assertEquals(null, controller.state.value.hostPayload)
         assertEquals(PinnaScreen.Home, controller.state.value.screen)
+        assertEquals(
+            RoomControlMessage.Error(PinnaSessionController.ROOM_ENDED_CODE, "The host ended the room."),
+            server.broadcasts.last(),
+        )
     }
 
     @Test
@@ -301,7 +348,7 @@ class PinnaSessionControllerTest {
                 port = 1234,
                 token = "token",
                 expiresAtEpochMillis = 2_000,
-                fingerprint = "fp",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
 
@@ -310,6 +357,28 @@ class PinnaSessionControllerTest {
         assertEquals("This room is not on your local network.", controller.state.value.errorMessage)
         assertEquals(PinnaScreen.Scanner, controller.state.value.screen)
         assertEquals(null, controller.state.value.listenerRoomState)
+    }
+
+    @Test
+    fun joinIsRejectedBeforeConnectingWhenDeviceHasNoLocalNetwork() = runBlocking {
+        val client = FakeLocalRoomClient(RoomState(roomId = "room-1", hostDeviceId = "host-1"))
+        val controller = newController(client = client, hasLocalNetworkTransport = { false })
+        val payload = QrJoinPayloadCodec.encode(
+            RoomJoinPayload(
+                version = 1,
+                roomId = "room-1",
+                host = "192.168.1.10",
+                port = 1234,
+                token = "token",
+                expiresAtEpochMillis = 2_000,
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
+            ),
+        )
+
+        controller.joinRoom(payload, nowEpochMillis = 1_000)
+
+        assertEquals("Connect to the host's Wi-Fi or phone hotspot before joining.", controller.state.value.errorMessage)
+        assertEquals(0, client.connectCalls)
     }
 
     @Test
@@ -324,7 +393,7 @@ class PinnaSessionControllerTest {
                 port = 1234,
                 token = "token",
                 expiresAtEpochMillis = 2_000,
-                fingerprint = "fp",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
 
@@ -332,6 +401,8 @@ class PinnaSessionControllerTest {
 
         assertEquals(PinnaScreen.ListenerRoom, controller.state.value.screen)
         assertEquals("room-1", controller.state.value.listenerRoomState!!.roomId)
+        assertTrue(client.sentMessages.any { it is RoomControlMessage.Join })
+        assertTrue(client.sentMessages.any { it is RoomControlMessage.Ready })
     }
 
     @Test
@@ -346,7 +417,7 @@ class PinnaSessionControllerTest {
                 port = 1234,
                 token = "token",
                 expiresAtEpochMillis = 2_000,
-                fingerprint = "fp",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
         controller.joinRoom(payload, nowEpochMillis = 1_000)
@@ -383,7 +454,7 @@ class PinnaSessionControllerTest {
                 port = 1234,
                 token = "token",
                 expiresAtEpochMillis = 2_000,
-                fingerprint = "fp",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
 
@@ -404,6 +475,7 @@ class PinnaSessionControllerTest {
         repository: TrackLibraryRepository? = null,
         importedTrackCleaner: (Track) -> Unit = {},
         hotspot: LocalHotspotCoordinator? = null,
+        hasLocalNetworkTransport: () -> Boolean = { true },
         scope: kotlinx.coroutines.CoroutineScope? = null,
     ): PinnaSessionController = PinnaSessionController(
         server = server,
@@ -414,6 +486,7 @@ class PinnaSessionControllerTest {
         trackRepository = repository,
         importedTrackCleaner = importedTrackCleaner,
         hotspotCoordinator = hotspot,
+        hasLocalNetworkTransport = hasLocalNetworkTransport,
         hostName = "host-1",
         scope = scope ?: kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default),
     ).also { controllers += it }
@@ -465,6 +538,7 @@ private class FakeLocalRoomServer(
         private set
     var started = false
     var stopped = false
+    val broadcasts = mutableListOf<RoomControlMessage>()
 
     override suspend fun start(roomState: RoomState, token: String, tracks: Map<String, String>): LocalRoomEndpoint {
         startFailure?.let { throw it }
@@ -479,15 +553,18 @@ private class FakeLocalRoomServer(
         endpoint = null
     }
 
-    override suspend fun broadcast(message: RoomControlMessage) = Unit
+    override suspend fun broadcast(message: RoomControlMessage) {
+        broadcasts += message
+    }
 }
 
 private class FakeLocalHotspotCoordinator(
     val session: LocalHotspotSession = LocalHotspotSession(ssid = "Pinna", passphrase = "secret-pass"),
     private val startResult: Result<LocalHotspotSession> = Result.success(session),
     private val onStart: () -> Unit = {},
+    initialState: LocalHotspotState = LocalHotspotState.Stopped,
 ) : LocalHotspotCoordinator {
-    private val _state = MutableStateFlow<LocalHotspotState>(LocalHotspotState.Stopped)
+    private val _state = MutableStateFlow(initialState)
     override val state = _state
     var stopped = false
         private set
@@ -516,8 +593,14 @@ class FakeLocalRoomClient(
         private set
     var openControlStreamCalls = 0
         private set
+    var connectCalls = 0
+        private set
+    val sentMessages = mutableListOf<RoomControlMessage>()
 
-    override suspend fun connect(endpoint: LocalRoomEndpoint, token: String): Result<RoomState> = Result.success(roomState)
+    override suspend fun connect(endpoint: LocalRoomEndpoint, token: String): Result<RoomState> {
+        connectCalls += 1
+        return Result.success(roomState)
+    }
     override suspend fun openControlStream(endpoint: LocalRoomEndpoint, token: String): Result<Unit> {
         openControlStreamCalls += 1
         openControlStreamResult
@@ -525,7 +608,10 @@ class FakeLocalRoomClient(
             .onFailure { controlStreamState.value = ControlStreamState.Failed(it.message ?: "Control stream failed.") }
         return openControlStreamResult
     }
-    override suspend fun send(message: RoomControlMessage): Result<Unit> = Result.success(Unit)
+    override suspend fun send(message: RoomControlMessage): Result<Unit> {
+        sentMessages += message
+        return Result.success(Unit)
+    }
     override suspend fun disconnect() {
         disconnected = true
         controlStreamState.value = ControlStreamState.Disconnected
@@ -543,6 +629,9 @@ class FakePlaybackController : PlaybackController {
     }
     override fun pause() {
         snapshots.value = snapshots.value.copy(state = PlaybackState.PAUSED)
+    }
+    override fun resume() {
+        snapshots.value = snapshots.value.copy(state = PlaybackState.PLAYING)
     }
     override fun seekTo(positionMs: Long) {
         snapshots.value = snapshots.value.copy(positionMs = positionMs)

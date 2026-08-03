@@ -25,4 +25,5 @@ interface LocalRoomClient {
     suspend fun openControlStream(endpoint: LocalRoomEndpoint, token: String): Result<Unit>
     suspend fun send(message: RoomControlMessage): Result<Unit>
     suspend fun disconnect()
+    suspend fun shutdown() = disconnect()
 }

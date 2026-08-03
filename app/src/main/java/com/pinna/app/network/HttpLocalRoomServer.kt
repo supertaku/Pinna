@@ -1,11 +1,13 @@
 package com.pinna.app.network
 
 import com.pinna.app.connectivity.NetworkAddressProvider
+import com.pinna.app.connectivity.LocalAddressValidator
 import com.pinna.app.protocol.RoomControlMessage
 import com.pinna.app.protocol.RoomProtocol
 import com.pinna.app.room.RoomEvent
 import com.pinna.app.room.RoomReducer
 import com.pinna.app.room.RoomState
+import com.pinna.app.voice.TalkArbiter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +48,9 @@ class HttpLocalRoomServer(
 
     private val stateLock = Any()
     private val controlStreams = ControlStreamHub(maxStreams = 8)
+    private val talkArbiter = TalkArbiter()
+    private val voiceSequences = mutableMapOf<String, Long>()
+    private val talkLock = Any()
     private val _rooms = MutableStateFlow(RoomState.initial())
 
     /** Live room snapshot, updated as listeners join/ready and the host broadcasts control events. */
@@ -72,7 +77,14 @@ class HttpLocalRoomServer(
             this@HttpLocalRoomServer.tracks = tracks
             _rooms.value = roomState
 
-            val advertisedHost = addressProvider.selectedIpv4Address().ifBlank { LOOPBACK_IPV4 }
+            val advertisedHost = addressProvider.selectedIpv4Address()
+            if (bindHost == "0.0.0.0") {
+                require(
+                    advertisedHost.isNotBlank() &&
+                        LocalAddressValidator.isAllowedLocalHost(advertisedHost) &&
+                        !advertisedHost.startsWith("127."),
+                ) { "Connect to Wi-Fi or start a phone hotspot before creating a room." }
+            }
             val socket = ServerSocket(0, 50, InetAddress.getByName(bindHost))
             serverSocket = socket
             running.set(true)
@@ -93,6 +105,14 @@ class HttpLocalRoomServer(
     }
 
     override suspend fun broadcast(message: RoomControlMessage) {
+        if (
+            message is RoomControlMessage.StartTalk ||
+            message is RoomControlMessage.EndTalk ||
+            message is RoomControlMessage.Voice
+        ) {
+            relayPushToTalk(message, emitToHost = false)
+            return
+        }
         val effectiveMessage = recordHostControlMessage(message)
         controlStreams.broadcastText(RoomProtocol.encode(effectiveMessage))
     }
@@ -169,6 +189,7 @@ class HttpLocalRoomServer(
     }
 
     private fun handleClient(socket: Socket) {
+        socket.soTimeout = HTTP_REQUEST_TIMEOUT_MS
         val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
         val requestLine = reader.readLine() ?: return
         val requestParts = requestLine.split(" ")
@@ -184,6 +205,7 @@ class HttpLocalRoomServer(
             return
         }
         if (method == "GET" && path == "/control-stream") {
+            socket.soTimeout = 0
             handleControlStream(socket, headers)
             return
         }
@@ -218,7 +240,6 @@ class HttpLocalRoomServer(
             socket.writeResponse(416, "Range Not Satisfiable")
             return
         }
-        val bytes = readRange(file, range)
         val status = if (headers.containsKey(RoomHttpRoutes.RANGE)) 206 else 200
         val extraHeaders = buildMap {
             put("Accept-Ranges", "bytes")
@@ -229,7 +250,7 @@ class HttpLocalRoomServer(
                 )
             }
         }
-        socket.writeBytesResponse(status, bytes, "application/octet-stream", extraHeaders)
+        socket.writeFileResponse(status, file, range, "application/octet-stream", extraHeaders)
     }
 
     private fun handleControlStream(socket: Socket, headers: Map<String, String>) {
@@ -289,9 +310,41 @@ class HttpLocalRoomServer(
      * listeners hear it) and surfaces it on [incomingControl] so the host can play it. Push-to-talk
      * carries no room authority and never mutates room state.
      */
-    private fun relayPushToTalk(message: RoomControlMessage) {
+    private fun relayPushToTalk(message: RoomControlMessage, emitToHost: Boolean = true) {
+        val accepted = synchronized(talkLock) {
+            when (message) {
+                is RoomControlMessage.StartTalk -> {
+                    if (!message.deviceId.isValidVoiceDeviceId()) return@synchronized false
+                    if (!talkArbiter.requestTalk(message.deviceId, System.currentTimeMillis())) return@synchronized false
+                    voiceSequences.remove(message.deviceId)
+                    true
+                }
+                is RoomControlMessage.Voice -> {
+                    if (
+                        !message.deviceId.isValidVoiceDeviceId() ||
+                        message.sequence < 0 ||
+                        message.pcmBase64.length > MAX_VOICE_BASE64_CHARS
+                    ) return@synchronized false
+                    if (!talkArbiter.isTalking(message.deviceId)) return@synchronized false
+                    val previous = voiceSequences[message.deviceId] ?: Long.MIN_VALUE
+                    if (message.sequence <= previous) return@synchronized false
+                    voiceSequences[message.deviceId] = message.sequence
+                    talkArbiter.noteActivity(message.deviceId, System.currentTimeMillis())
+                    true
+                }
+                is RoomControlMessage.EndTalk -> {
+                    if (!message.deviceId.isValidVoiceDeviceId()) return@synchronized false
+                    if (!talkArbiter.isTalking(message.deviceId)) return@synchronized false
+                    talkArbiter.endTalk(message.deviceId)
+                    voiceSequences.remove(message.deviceId)
+                    true
+                }
+                else -> false
+            }
+        }
+        if (!accepted) return
         controlStreams.broadcastText(RoomProtocol.encode(message))
-        _incomingControl.tryEmit(message)
+        if (emitToHost) _incomingControl.tryEmit(message)
     }
 
     private fun handleListenerControlMessage(message: RoomControlMessage) {
@@ -311,15 +364,6 @@ class HttpLocalRoomServer(
             is RoomControlMessage.Error,
             -> Unit
         }
-    }
-
-    private fun readRange(file: File, range: MediaRange): ByteArray {
-        val bytes = ByteArray(range.contentLength.toInt())
-        RandomAccessFile(file, "r").use { input ->
-            input.seek(range.startInclusive)
-            input.readFully(bytes)
-        }
-        return bytes
     }
 
     private fun readHeaders(reader: BufferedReader): Map<String, String> {
@@ -356,6 +400,10 @@ class HttpLocalRoomServer(
 }
 
 private const val LOOPBACK_IPV4 = "127.0.0.1"
+private const val HTTP_REQUEST_TIMEOUT_MS = 5_000
+private const val MAX_VOICE_BASE64_CHARS = 2_048
+
+private fun String.isValidVoiceDeviceId(): Boolean = isNotBlank() && length <= 128
 
 private fun RoomControlMessage.withFreshSequenceAfter(currentSequenceNumber: Long): RoomControlMessage {
     fun next(incoming: Long): Long = if (incoming <= currentSequenceNumber) currentSequenceNumber + 1 else incoming
@@ -408,6 +456,39 @@ private fun Socket.writeBytesResponse(
     getOutputStream().use { output ->
         output.write(header)
         output.write(body)
+        output.flush()
+    }
+}
+
+private fun Socket.writeFileResponse(
+    code: Int,
+    file: File,
+    range: MediaRange,
+    contentType: String,
+    extraHeaders: Map<String, String>,
+) {
+    val reason = if (code == 206) "Partial Content" else "OK"
+    val header = buildString {
+        append("HTTP/1.1 $code $reason\r\n")
+        append("Content-Type: $contentType\r\n")
+        append("Content-Length: ${range.contentLength}\r\n")
+        extraHeaders.forEach { (name, value) -> append("$name: $value\r\n") }
+        append("Connection: close\r\n")
+        append("\r\n")
+    }.encodeToByteArray()
+    getOutputStream().use { output ->
+        output.write(header)
+        RandomAccessFile(file, "r").use { input ->
+            input.seek(range.startInclusive)
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var remaining = range.contentLength
+            while (remaining > 0) {
+                val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                if (read < 0) error("Media file ended before the requested range was complete.")
+                output.write(buffer, 0, read)
+                remaining -= read
+            }
+        }
         output.flush()
     }
 }

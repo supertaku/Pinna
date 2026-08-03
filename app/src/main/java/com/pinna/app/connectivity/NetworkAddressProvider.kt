@@ -15,14 +15,24 @@ class DefaultNetworkAddressProvider(
     override fun selectedIpv4Address(): String =
         runCatching {
             networkInterfaces()
-                .filter { it.isUp && !it.isLoopback }
+                .filter { it.isUp && !it.isLoopback && it.isLikelyLanInterface() }
                 .flatMap { networkInterface -> networkInterface.inetAddresses.asSequence() }
                 .filterIsInstance<Inet4Address>()
-                .firstOrNull { !it.isLoopbackAddress }
+                .firstOrNull {
+                    !it.isLoopbackAddress && LocalAddressValidator.isAllowedLocalHost(it.hostAddress.orEmpty())
+                }
                 ?.hostAddress
-        }.getOrNull() ?: LOOPBACK_IPV4
+        }.getOrNull().orEmpty()
 
     companion object {
-        const val LOOPBACK_IPV4 = "127.0.0.1"
+        private fun NetworkInterface.isLikelyLanInterface(): Boolean {
+            val normalized = name.orEmpty().lowercase()
+            return normalized.startsWith("wlan") ||
+                normalized.startsWith("wifi") ||
+                normalized.startsWith("ap") ||
+                normalized.startsWith("swlan") ||
+                normalized.startsWith("eth") ||
+                normalized.startsWith("en")
+        }
     }
 }

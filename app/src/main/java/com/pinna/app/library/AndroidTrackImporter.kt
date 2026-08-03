@@ -1,7 +1,7 @@
 package com.pinna.app.library
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import com.pinna.app.core.model.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,21 +15,23 @@ class AndroidTrackImporter(context: Context) : TrackImporter {
     private val importDirectory = File(appContext.filesDir, "pinna-tracks")
 
     override suspend fun import(candidate: ImportedTrackCandidate): Result<Track> = withContext(Dispatchers.IO) {
+        var target: File? = null
         runCatching {
             require(candidate.sourceUri.isNotBlank()) { "Could not open selected audio file." }
-            val sourceUri = Uri.parse(candidate.sourceUri)
+            val sourceUri = candidate.sourceUri.toUri()
             val metadata = metadataReader.read(sourceUri, candidate.displayName.ifBlank { "Imported audio" })
             val mimeType = candidate.mimeType.ifBlank { metadata.mimeType }
             require(mimeType.startsWith("audio/")) { "Only audio files can be imported." }
 
             importDirectory.mkdirs()
             val id = UUID.randomUUID().toString()
-            val target = File(importDirectory, "$id.audio")
+            target = File(importDirectory, "$id.audio")
+            val importedFile = requireNotNull(target)
             resolver.openInputStream(sourceUri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
+                importedFile.outputStream().use { output -> input.copyTo(output) }
             } ?: error("Could not open selected audio file.")
 
-            require(target.length() > 0L) { "Selected audio file is empty." }
+            require(importedFile.length() > 0L) { "Selected audio file is empty." }
 
             Track(
                 id = id,
@@ -37,9 +39,9 @@ class AndroidTrackImporter(context: Context) : TrackImporter {
                 artist = null,
                 durationMs = metadata.durationMs,
                 mimeType = mimeType,
-                localUri = target.absolutePath,
-                sizeBytes = target.length(),
+                localUri = importedFile.absolutePath,
+                sizeBytes = importedFile.length(),
             )
-        }
+        }.onFailure { target?.delete() }
     }
 }

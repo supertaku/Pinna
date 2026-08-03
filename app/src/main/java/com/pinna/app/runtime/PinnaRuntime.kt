@@ -3,6 +3,8 @@ package com.pinna.app.runtime
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.room.Room
 import com.pinna.app.connectivity.AndroidLocalHotspotCoordinator
 import com.pinna.app.connectivity.DefaultNetworkAddressProvider
@@ -56,8 +58,16 @@ class PinnaRuntime(context: Context) {
         voiceSource = voiceSource,
         voiceSink = voiceSink,
         audioRouteProvider = ::currentAudioRoute,
+        hasLocalNetworkTransport = ::hasLocalNetworkTransport,
         scope = runtimeScope,
     )
+
+    private fun hasLocalNetworkTransport(): Boolean {
+        val manager = appContext.getSystemService(ConnectivityManager::class.java) ?: return false
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
 
     private fun currentAudioRoute(): AudioRoute {
         val manager = audioManager ?: return AudioRoute.UNKNOWN
@@ -74,6 +84,7 @@ class PinnaRuntime(context: Context) {
                 AudioDeviceInfo.TYPE_USB_HEADSET,
                 -> sawWired = true
                 AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> sawSpeaker = true
+                else -> Unit
             }
         }
         return when {

@@ -43,6 +43,16 @@ class HttpLocalRoomClientTest {
     }
 
     @Test
+    fun connectRejectsRoomIdentityMismatch() = runBlocking {
+        val endpoint = startServer().copy(roomId = "different-room")
+        val client = HttpLocalRoomClient()
+
+        val result = client.connect(endpoint, "token-123")
+
+        assertTrue(result.isFailure)
+    }
+
+    @Test
     fun sendReadyControlMessageReachesServer() = runBlocking {
         val endpoint = startServer()
         val client = HttpLocalRoomClient()

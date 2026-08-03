@@ -25,6 +25,7 @@ class DirectAudioUrlImporter(
     private val importDirectory = File(appContext.filesDir, "pinna-tracks")
 
     override suspend fun importFromUrl(url: String): Result<Track> = withContext(Dispatchers.IO) {
+        var partialFile: File? = null
         runCatching {
             require(AudioUrlValidator.isHttpsUrl(url)) { "Paste a direct https link to an audio file." }
 
@@ -33,9 +34,11 @@ class DirectAudioUrlImporter(
             var extension = "audio"
             var mimeType = "audio/*"
             val target = File(importDirectory, "$id.placeholder")
+            partialFile = target
 
             httpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 require(response.isSuccessful) { "Download failed (HTTP ${response.code})." }
+                require(response.request.url.isHttps) { "Audio downloads must remain on HTTPS." }
                 val contentType = response.header("Content-Type")
                 require(AudioUrlValidator.looksLikeAudio(contentType, url)) {
                     "That link is not a direct audio file."
@@ -52,6 +55,7 @@ class DirectAudioUrlImporter(
                 target.copyTo(finalFile, overwrite = true)
                 target.delete()
             }
+            partialFile = finalFile
 
             Track(
                 id = id,
@@ -62,7 +66,7 @@ class DirectAudioUrlImporter(
                 localUri = finalFile.absolutePath,
                 sizeBytes = finalFile.length(),
             )
-        }
+        }.onFailure { partialFile?.delete() }
     }
 
     private fun titleFor(url: String): String {

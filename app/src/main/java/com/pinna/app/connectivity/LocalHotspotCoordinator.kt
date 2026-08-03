@@ -1,6 +1,7 @@
 package com.pinna.app.connectivity
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.os.Build
 import kotlinx.coroutines.flow.StateFlow
 
@@ -24,12 +25,14 @@ sealed interface LocalHotspotState {
 }
 
 object LocalHotspotPermissions {
+    @SuppressLint("InlinedApi")
     fun requiredFor(apiLevel: Int, targetSdk: Int): Set<String> {
         return buildSet {
             add(Manifest.permission.CHANGE_WIFI_STATE)
             if (apiLevel >= Build.VERSION_CODES.TIRAMISU && targetSdk >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.NEARBY_WIFI_DEVICES)
             } else {
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
         }

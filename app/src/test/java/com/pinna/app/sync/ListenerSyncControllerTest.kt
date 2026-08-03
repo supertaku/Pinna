@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package com.pinna.app.sync
 
 import com.pinna.app.core.model.PlaybackState
@@ -5,6 +7,9 @@ import com.pinna.app.playback.PlaybackController
 import com.pinna.app.playback.PlaybackSnapshot
 import com.pinna.app.protocol.RoomControlMessage
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -83,6 +88,76 @@ class ListenerSyncControllerTest {
         assertEquals(DriftAction.IGNORE, action)
         assertEquals(0, controller.correctionCount)
     }
+
+    @Test
+    fun nudgeResetReturnsPlaybackSpeedToOneAfterWindow() {
+        val scope = TestScope(StandardTestDispatcher())
+        val playback = RecordingPlaybackController(positionMs = 1_050)
+        val controller = ListenerSyncController(
+            playback = playback,
+            nowClientNanos = { 2_000_000_000 },
+            scope = scope,
+        )
+
+        val action = controller.correctDrift(timeline, manualOffsetMs = 0)
+        scope.runCurrent()
+        scope.testScheduler.advanceTimeBy(1_499)
+        scope.runCurrent()
+
+        assertEquals(DriftAction.NUDGE_SPEED, action)
+        assertEquals(listOf("speed:0.98"), playback.calls)
+
+        scope.testScheduler.advanceTimeBy(1)
+        scope.runCurrent()
+
+        assertEquals(listOf("speed:0.98", "speed:1.0"), playback.calls)
+    }
+
+    @Test
+    fun newerCorrectionCancelsPreviousNudgeReset() {
+        val scope = TestScope(StandardTestDispatcher())
+        val playback = RecordingPlaybackController(positionMs = 1_050)
+        val controller = ListenerSyncController(
+            playback = playback,
+            nowClientNanos = { 2_000_000_000 },
+            scope = scope,
+        )
+
+        controller.correctDrift(timeline, manualOffsetMs = 0)
+        scope.runCurrent()
+        scope.testScheduler.advanceTimeBy(1_000)
+        playback.snapshots.value = playback.snapshots.value.copy(positionMs = 950)
+        controller.correctDrift(timeline, manualOffsetMs = 0)
+        scope.runCurrent()
+        scope.testScheduler.advanceTimeBy(500)
+        scope.runCurrent()
+
+        assertEquals(listOf("speed:0.98", "speed:1.02"), playback.calls)
+
+        scope.testScheduler.advanceTimeBy(1_000)
+        scope.runCurrent()
+
+        assertEquals(listOf("speed:0.98", "speed:1.02", "speed:1.0"), playback.calls)
+    }
+
+    @Test
+    fun cancelPendingCorrectionsCancelsScheduledNudgeReset() {
+        val scope = TestScope(StandardTestDispatcher())
+        val playback = RecordingPlaybackController(positionMs = 1_050)
+        val controller = ListenerSyncController(
+            playback = playback,
+            nowClientNanos = { 2_000_000_000 },
+            scope = scope,
+        )
+
+        controller.correctDrift(timeline, manualOffsetMs = 0)
+        scope.runCurrent()
+        controller.cancelPendingCorrections()
+        scope.testScheduler.advanceTimeBy(1_500)
+        scope.runCurrent()
+
+        assertEquals(listOf("speed:0.98", "speed:1.0"), playback.calls)
+    }
 }
 
 private class RecordingPlaybackController(positionMs: Long) : PlaybackController {
@@ -101,6 +176,10 @@ private class RecordingPlaybackController(positionMs: Long) : PlaybackController
 
     override fun seekTo(positionMs: Long) {
         calls += "seek:$positionMs"
+    }
+
+    override fun resume() {
+        calls += "resume"
     }
 
     override fun stop() {

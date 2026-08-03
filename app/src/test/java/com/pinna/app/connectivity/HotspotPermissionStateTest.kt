@@ -6,7 +6,7 @@ import org.junit.Test
 
 class HotspotPermissionStateTest {
     @Test
-    fun api26_requiresChangeWifiStateAndFineLocation() {
+    fun api26RequiresChangeWifiStateAndLocationPair() {
         val permissions = LocalHotspotPermissions.requiredFor(
             apiLevel = 26,
             targetSdk = 36,
@@ -15,6 +15,7 @@ class HotspotPermissionStateTest {
         assertEquals(
             setOf(
                 Manifest.permission.CHANGE_WIFI_STATE,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
             ),
             permissions,
@@ -22,7 +23,7 @@ class HotspotPermissionStateTest {
     }
 
     @Test
-    fun api29_requiresChangeWifiStateAndFineLocation() {
+    fun api29RequiresChangeWifiStateAndLocationPair() {
         val permissions = LocalHotspotPermissions.requiredFor(
             apiLevel = 29,
             targetSdk = 36,
@@ -31,6 +32,7 @@ class HotspotPermissionStateTest {
         assertEquals(
             setOf(
                 Manifest.permission.CHANGE_WIFI_STATE,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
             ),
             permissions,
@@ -38,7 +40,7 @@ class HotspotPermissionStateTest {
     }
 
     @Test
-    fun api31_requiresChangeWifiStateAndFineLocation() {
+    fun api31RequiresChangeWifiStateAndLocationPair() {
         val permissions = LocalHotspotPermissions.requiredFor(
             apiLevel = 31,
             targetSdk = 36,
@@ -47,6 +49,7 @@ class HotspotPermissionStateTest {
         assertEquals(
             setOf(
                 Manifest.permission.CHANGE_WIFI_STATE,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
             ),
             permissions,
@@ -108,6 +111,7 @@ class HotspotPermissionStateTest {
             targetSdk = 36,
             grantedPermissions = setOf(
                 Manifest.permission.CHANGE_WIFI_STATE,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
             ),
         )

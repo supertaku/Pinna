@@ -1,5 +1,6 @@
 package com.pinna.app.sync
 
+import com.pinna.app.core.model.PlaybackState
 import com.pinna.app.core.time.SyncClockModel
 import com.pinna.app.playback.PlaybackController
 import kotlin.math.roundToLong
@@ -13,6 +14,7 @@ class SyncEngine(
         manualOffsetMs: Long = 0,
     ): DriftAction {
         val actualPositionMs = playback.snapshots.value.positionMs
+        val wasPlaying = playback.snapshots.value.state == PlaybackState.PLAYING
         val targetPositionMs = targetPositionMs(timeline, estimatedHostNowNanos, manualOffsetMs)
         val driftMs = actualPositionMs - targetPositionMs
         return when (val action = DriftCorrectionPolicy.classify(driftMs)) {
@@ -22,12 +24,15 @@ class SyncEngine(
                 action
             }
             DriftAction.SEEK -> {
+                playback.setPlaybackSpeed(1.0f)
                 playback.seekTo(targetPositionMs)
                 action
             }
             DriftAction.REBUFFER -> {
+                playback.setPlaybackSpeed(1.0f)
                 playback.pause()
                 playback.seekTo(targetPositionMs)
+                if (wasPlaying) playback.resume()
                 action
             }
         }

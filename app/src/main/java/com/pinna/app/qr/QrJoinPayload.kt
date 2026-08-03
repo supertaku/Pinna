@@ -27,6 +27,7 @@ sealed interface QrDecodeResult {
 object QrJoinPayloadCodec {
     private const val PREFIX = "pinna://join?"
     private const val SUPPORTED_VERSION = 1
+    const val ROOM_FINGERPRINT = "local-room"
 
     fun encode(payload: RoomJoinPayload): String {
         val fields = listOf(
@@ -80,6 +81,9 @@ object QrJoinPayloadCodec {
             payload.fingerprint.isBlank()
         ) {
             return QrDecodeResult.Invalid("Room QR is missing connection details.")
+        }
+        if (payload.fingerprint != ROOM_FINGERPRINT) {
+            return QrDecodeResult.Invalid("Room QR fingerprint is not recognized.")
         }
         if (payload.expiresAtEpochMillis <= nowEpochMillis) return QrDecodeResult.Expired
         return QrDecodeResult.Valid(payload)

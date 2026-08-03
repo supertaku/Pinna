@@ -62,4 +62,9 @@ class ManifestPolicyTest {
     fun backupIsDisabledSoRoomDataStaysLocal() {
         assertTrue(manifest.contains("android:allowBackup=\"false\""))
     }
+
+    @Test
+    fun processScopedRuntimeApplicationIsDeclared() {
+        assertTrue(manifest.contains("android:name=\".PinnaApplication\""))
+    }
 }

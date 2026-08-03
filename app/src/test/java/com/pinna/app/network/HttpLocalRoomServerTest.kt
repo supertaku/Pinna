@@ -42,14 +42,14 @@ class HttpLocalRoomServerTest {
         val server = newStartedServer(
             server = HttpLocalRoomServer(
                 bindHost = "0.0.0.0",
-                addressProvider = NetworkAddressProvider { "192.0.2.10" },
+                addressProvider = NetworkAddressProvider { "192.168.1.10" },
             ),
         )
         val endpoint = server.endpoint!!
 
         val response = get("http://127.0.0.1:${endpoint.port}/room", token = "token-123")
 
-        assertEquals("192.0.2.10", endpoint.host)
+        assertEquals("192.168.1.10", endpoint.host)
         assertEquals(200, response.code)
         assertTrue(response.body.contains("roomId=room-1"))
     }

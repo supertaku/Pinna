@@ -66,6 +66,20 @@ class SyncEngineTest {
     }
 
     @Test
+    fun nudgeSpeedSetsBoundedSlowAndFastSpeed() {
+        val fastPlayback = FakePlaybackController(positionMs = 950)
+        val slowPlayback = FakePlaybackController(positionMs = 1_050)
+
+        val fastAction = SyncEngine(fastPlayback).correctDrift(timeline, estimatedHostNowNanos = 2_000_000_000)
+        val slowAction = SyncEngine(slowPlayback).correctDrift(timeline, estimatedHostNowNanos = 2_000_000_000)
+
+        assertEquals(DriftAction.NUDGE_SPEED, fastAction)
+        assertEquals(DriftAction.NUDGE_SPEED, slowAction)
+        assertEquals(listOf("speed:1.02"), fastPlayback.calls)
+        assertEquals(listOf("speed:0.98"), slowPlayback.calls)
+    }
+
+    @Test
     fun driftBetween80And250MsSeeksToTarget() {
         val playback = FakePlaybackController(positionMs = 1_120)
         val engine = SyncEngine(playback)
@@ -73,7 +87,18 @@ class SyncEngineTest {
         val action = engine.correctDrift(timeline, estimatedHostNowNanos = 2_000_000_000)
 
         assertEquals(DriftAction.SEEK, action)
-        assertEquals(listOf("seek:1000"), playback.calls)
+        assertEquals(listOf("speed:1.0", "seek:1000"), playback.calls)
+    }
+
+    @Test
+    fun seekCorrectionResetsSpeedToNormal() {
+        val playback = FakePlaybackController(positionMs = 1_120)
+        val engine = SyncEngine(playback)
+
+        val action = engine.correctDrift(timeline, estimatedHostNowNanos = 2_000_000_000)
+
+        assertEquals(DriftAction.SEEK, action)
+        assertEquals(listOf("speed:1.0", "seek:1000"), playback.calls)
     }
 
     @Test
@@ -84,13 +109,27 @@ class SyncEngineTest {
         val action = engine.correctDrift(timeline, estimatedHostNowNanos = 2_000_000_000)
 
         assertEquals(DriftAction.REBUFFER, action)
-        assertEquals(listOf("pause", "seek:1000"), playback.calls)
+        assertEquals(listOf("speed:1.0", "pause", "seek:1000", "resume"), playback.calls)
+    }
+
+    @Test
+    fun rebufferDoesNotResumeWhenPlaybackIsNotPlaying() {
+        val playback = FakePlaybackController(positionMs = 1_300, state = PlaybackState.PAUSED)
+        val engine = SyncEngine(playback)
+
+        val action = engine.correctDrift(timeline, estimatedHostNowNanos = 2_000_000_000)
+
+        assertEquals(DriftAction.REBUFFER, action)
+        assertEquals(listOf("speed:1.0", "pause", "seek:1000"), playback.calls)
     }
 }
 
-private class FakePlaybackController(positionMs: Long) : PlaybackController {
+private class FakePlaybackController(
+    positionMs: Long,
+    state: PlaybackState = PlaybackState.PLAYING,
+) : PlaybackController {
     override val snapshots = MutableStateFlow(
-        PlaybackSnapshot(state = PlaybackState.PLAYING, trackId = "track-1", positionMs = positionMs),
+        PlaybackSnapshot(state = state, trackId = "track-1", positionMs = positionMs),
     )
     val calls = mutableListOf<String>()
 
@@ -104,6 +143,10 @@ private class FakePlaybackController(positionMs: Long) : PlaybackController {
 
     override fun seekTo(positionMs: Long) {
         calls += "seek:$positionMs"
+    }
+
+    override fun resume() {
+        calls += "resume"
     }
 
     override fun stop() {

@@ -117,7 +117,7 @@ class PinnaAppComposeTest {
                 port = 1234,
                 token = "token",
                 expiresAtEpochMillis = 4_000,
-                fingerprint = "fp",
+                fingerprint = QrJoinPayloadCodec.ROOM_FINGERPRINT,
             ),
         )
         controller.joinRoom(payload, nowEpochMillis = 1_000)
@@ -184,6 +184,10 @@ private class FakePlaybackController : PlaybackController {
 
     override fun pause() {
         snapshots.value = snapshots.value.copy(state = PlaybackState.PAUSED)
+    }
+
+    override fun resume() {
+        snapshots.value = snapshots.value.copy(state = PlaybackState.PLAYING)
     }
 
     override fun seekTo(positionMs: Long) {

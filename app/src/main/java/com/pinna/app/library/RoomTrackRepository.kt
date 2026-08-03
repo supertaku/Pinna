@@ -5,12 +5,23 @@ import java.io.File
 
 class RoomTrackRepository(
     private val dao: TrackDao,
+    private val fileExists: (String) -> Boolean = { path -> File(path).isFile },
     private val fileDeleter: (String) -> Boolean = { path ->
         val file = File(path)
         !file.exists() || file.delete()
     },
 ) : TrackLibraryRepository {
-    override suspend fun loadTracks(): List<Track> = dao.getAll().map { it.toTrack() }
+    override suspend fun loadTracks(): List<Track> {
+        val available = mutableListOf<Track>()
+        dao.getAll().forEach { entity ->
+            if (fileExists(entity.localPath)) {
+                available += entity.toTrack()
+            } else {
+                dao.deleteById(entity.id)
+            }
+        }
+        return available
+    }
 
     override suspend fun saveTrack(track: Track, nowEpochMillis: Long): Track {
         val existing = dao.findById(track.id)

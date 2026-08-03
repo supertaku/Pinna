@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package com.pinna.app.runtime
 
 import com.pinna.app.core.model.PlaybackState
@@ -288,16 +290,23 @@ class PinnaSessionControllerControlStreamTest {
     fun incomingVoiceFromAnotherDevicePlaysAndSetsTalker() = runBlocking {
         val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
         val sink = RecordingVoiceSink()
-        val controller = voiceController(client = client, sink = sink, deviceId = "me")
+        val playback = ControlStreamFakePlaybackController()
+        val controller = voiceController(client = client, sink = sink, playback = playback, deviceId = "me")
         controller.joinRoom(payload(), nowEpochMillis = 1_000)
         scope.runCurrent()
 
         val pcm = byteArrayOf(1, 2, 3, 4)
+        client.emit(RoomControlMessage.StartTalk("other"))
         client.emit(RoomControlMessage.Voice("other", sequence = 1, pcmBase64 = Base64.getEncoder().encodeToString(pcm)))
         scope.runCurrent()
 
         assertEquals(1, sink.frames.size)
         assertEquals("other", controller.state.value.talkerDeviceId)
+        assertEquals(listOf(PinnaSessionController.TALK_DUCK_VOLUME), playback.volumeMultipliers)
+
+        client.emit(RoomControlMessage.EndTalk("other"))
+        scope.runCurrent()
+        assertEquals(listOf(PinnaSessionController.TALK_DUCK_VOLUME, 1f), playback.volumeMultipliers)
     }
 
     @Test
@@ -361,6 +370,41 @@ class PinnaSessionControllerControlStreamTest {
         assertEquals("The host ended the room.", controller.state.value.errorMessage)
     }
 
+    @Test
+    fun roomEndedMessageStopsPlaybackAndReturnsHome() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PLAYING, sequenceNumber = 1))
+        val playback = ControlStreamFakePlaybackController()
+        val controller = newController(client = client, playback = playback)
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+
+        client.emit(RoomControlMessage.Error(PinnaSessionController.ROOM_ENDED_CODE, "The host ended the room."))
+        scope.runCurrent()
+
+        assertEquals(PinnaScreen.Home, controller.state.value.screen)
+        assertNull(controller.state.value.listenerRoomState)
+        assertEquals(PlaybackState.IDLE, playback.snapshots.value.state)
+        assertEquals("The host ended the room.", controller.state.value.errorMessage)
+    }
+
+    @Test
+    fun voiceRequiresFloorAndRejectsReplayedSequence() = runBlocking {
+        val client = ControlStreamFakeClient(room(playback = PlaybackState.PAUSED, sequenceNumber = 1))
+        val sink = RecordingVoiceSink()
+        val controller = voiceController(client = client, sink = sink, deviceId = "me")
+        controller.joinRoom(payload(), nowEpochMillis = 1_000)
+        scope.runCurrent()
+        val encoded = Base64.getEncoder().encodeToString(byteArrayOf(7))
+
+        client.emit(RoomControlMessage.Voice("other", sequence = 1, pcmBase64 = encoded))
+        client.emit(RoomControlMessage.StartTalk("other"))
+        client.emit(RoomControlMessage.Voice("other", sequence = 1, pcmBase64 = encoded))
+        client.emit(RoomControlMessage.Voice("other", sequence = 1, pcmBase64 = encoded))
+        scope.runCurrent()
+
+        assertEquals(1, sink.frames.size)
+    }
+
     private fun newController(
         client: LocalRoomClient,
         playback: PlaybackController = ControlStreamFakePlaybackController(),
@@ -376,11 +420,12 @@ class PinnaSessionControllerControlStreamTest {
         client: LocalRoomClient,
         sink: VoiceSink? = null,
         source: VoiceSource? = null,
+        playback: PlaybackController = ControlStreamFakePlaybackController(),
         deviceId: String,
     ): PinnaSessionController = PinnaSessionController(
         server = ControlStreamFakeLocalRoomServer(),
         client = client,
-        playback = ControlStreamFakePlaybackController(),
+        playback = playback,
         voiceSource = source,
         voiceSink = sink,
         deviceId = deviceId,
@@ -533,6 +578,7 @@ private class ControlStreamFakePlaybackController : PlaybackController {
     override val snapshots = MutableStateFlow(PlaybackSnapshot())
     var lastUri: String? = null
     var lastHeaders: Map<String, String> = emptyMap()
+    val volumeMultipliers = mutableListOf<Float>()
 
     override fun play(trackId: String, uri: String, positionMs: Long, requestHeaders: Map<String, String>) {
         lastUri = uri
@@ -544,11 +590,19 @@ private class ControlStreamFakePlaybackController : PlaybackController {
         snapshots.value = snapshots.value.copy(state = PlaybackState.PAUSED)
     }
 
+    override fun resume() {
+        snapshots.value = snapshots.value.copy(state = PlaybackState.PLAYING)
+    }
+
     override fun seekTo(positionMs: Long) {
         snapshots.value = snapshots.value.copy(positionMs = positionMs)
     }
 
     override fun stop() {
         snapshots.value = PlaybackSnapshot()
+    }
+
+    override fun setVolumeMultiplier(multiplier: Float) {
+        volumeMultipliers += multiplier
     }
 }

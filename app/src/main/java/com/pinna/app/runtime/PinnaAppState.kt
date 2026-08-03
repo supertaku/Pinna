@@ -45,6 +45,7 @@ data class ListenerSyncStatus(
 
 data class PinnaAppState(
     val screen: PinnaScreen = PinnaScreen.Home,
+    val diagnosticsReturnScreen: PinnaScreen = PinnaScreen.Home,
     val importedTracks: List<Track> = emptyList(),
     val hostEndpoint: LocalRoomEndpoint? = null,
     val hostPayload: String? = null,

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Adaptive-icon XML is only accepted by AAPT from a v26-qualified folder. -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+    <issue id="UnsafeOptInUsageError">
+        <option
+            name="opt-in"
+            value="androidx.camera.core.ExperimentalGetImage,androidx.media3.common.util.UnstableApi" />
+    </issue>
+</lint>
