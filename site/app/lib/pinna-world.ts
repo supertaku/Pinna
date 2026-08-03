@@ -247,16 +247,6 @@ export class PinnaWorld {
 
     this.buildPackets();
     this.setupPostProcessing();
-
-    const manager = new THREE.LoadingManager();
-    manager.onError = () => undefined;
-    const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#0F766E"/><path d="M0 0h2v2H0zm2 2h2v2H2z" fill="#14B8A6" opacity=".25"/></svg>`;
-    new THREE.TextureLoader(manager).load(`data:image/svg+xml,${encodeURIComponent(fallbackSvg)}`, (texture) => {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(48, 48);
-      this.scene.background = new THREE.Color(INK);
-    });
   }
 
   private clay(color: number, materials: THREE.Material[], emissive = 0) {

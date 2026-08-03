@@ -65,12 +65,11 @@ export function PinnaExperience() {
   const [sound, setSound] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [introOpen, setIntroOpen] = useState(true);
+  const [quality, setQuality] = useState<"high" | "medium" | "low">("medium");
   const [fallback, setFallback] = useState<string | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [selection, setSelection] = useState<{ label: string; detail: string } | null>(null);
   const [ready, setReady] = useState(false);
-  const [autoTour, setAutoTour] = useState(true);
-  const [tourHolding, setTourHolding] = useState(false);
 
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
@@ -90,7 +89,7 @@ export function PinnaExperience() {
         worldRef.current = new PinnaWorld(canvasRef.current, {
           onSelect: setSelection,
           onFallback: setFallback,
-          onQuality: () => undefined,
+          onQuality: setQuality,
         });
         setReady(true);
       } catch {
@@ -130,7 +129,7 @@ export function PinnaExperience() {
   }, []);
 
   useEffect(() => {
-    if (introOpen || reducedMotion || !autoTour) return;
+    if (introOpen || reducedMotion) return;
 
     let frame = 0;
     let lastFrame = performance.now();
@@ -148,12 +147,10 @@ export function PinnaExperience() {
       if (tourTimerRef.current !== null) window.clearTimeout(tourTimerRef.current);
       if (!tourHoldingRef.current) {
         tourHoldingRef.current = true;
-        setTourHolding(true);
       }
       tourTimerRef.current = window.setTimeout(() => {
         tourHoldingRef.current = false;
         tourTimerRef.current = null;
-        setTourHolding(false);
       }, duration);
     };
 
@@ -214,7 +211,7 @@ export function PinnaExperience() {
       window.removeEventListener("pointerup", pauseForUser);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [introOpen, reducedMotion, autoTour]);
+  }, [introOpen, reducedMotion]);
 
   useEffect(() => {
     const playback = new RoomSound(landingConfig.audioUrl);
@@ -248,9 +245,9 @@ export function PinnaExperience() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [sound, autoplayBlocked, introOpen]);
 
-  const enterExperience = useCallback(async (withSound: boolean) => {
-    const started = withSound ? await soundRef.current?.enable() : false;
-    setAutoplayBlocked(withSound && !started);
+  const explore = useCallback(async () => {
+    const started = await soundRef.current?.enable();
+    setAutoplayBlocked(!started);
     setSound(Boolean(started));
     setIntroOpen(false);
   }, []);
@@ -270,37 +267,28 @@ export function PinnaExperience() {
     document.getElementById(id)?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
   };
 
-  const toggleAutoTour = () => {
-    if (tourTimerRef.current !== null) {
-      window.clearTimeout(tourTimerRef.current);
-      tourTimerRef.current = null;
-    }
-    tourHoldingRef.current = false;
-    setTourHolding(false);
-    setAutoTour((enabled) => !enabled);
-  };
-
   const staticMode = reducedMotion || Boolean(fallback);
 
   return (
     <>
       {introOpen && (
-        <div className="entry-gate" role="dialog" aria-modal="true" aria-labelledby="entry-title" aria-describedby="entry-description">
-          <div className="entry-backdrop" aria-hidden="true" />
-          <div className="entry-shell">
-            <div className="entry-copy">
-              <PinnaLogo />
-              <h1 id="entry-title">One room.<br />One beat.</h1>
-              <p id="entry-description">Turn nearby Android phones into one shared listening room. No account or cloud relay required.</p>
-              <div className="entry-actions">
-                <button className="button" type="button" autoFocus onClick={() => void enterExperience(true)}>Enter with sound</button>
-                <button className="entry-muted" type="button" onClick={() => void enterExperience(false)}>Continue muted</button>
-              </div>
+        <div className="intro-modal" role="dialog" aria-modal="true" aria-labelledby="intro-title" aria-describedby="intro-description">
+          <div className="intro-backdrop" aria-hidden="true" />
+          <div className="intro-card">
+            <div className="intro-illustration" aria-hidden="true">
+              <span className="intro-ripple intro-ripple-one" />
+              <span className="intro-ripple intro-ripple-two" />
+              <span className="intro-ripple intro-ripple-three" />
+              <span className="intro-ear"><i /></span>
+              <b>pinna</b>
             </div>
-            <div className="entry-visual" aria-hidden="true">
-              <Image src="/og.png" alt="" fill priority sizes="(max-width: 720px) 100vw, 58vw" />
-              <span className="entry-wave entry-wave-one" />
-              <span className="entry-wave entry-wave-two" />
+            <div className="intro-copy">
+              <p className="intro-eyebrow">EAR TRIVIA</p>
+              <h2 id="intro-title">A small part with a big job.</h2>
+              <p id="intro-description">The <strong>pinna</strong> is the visible outer part of your ear. Its curves collect sound waves and guide them into the ear canal, while also helping you tell where a sound is coming from.</p>
+              <button className="button intro-explore" type="button" autoFocus onClick={() => void explore()}>
+                Explore <span aria-hidden="true">&rarr;</span>
+              </button>
             </div>
           </div>
         </div>
@@ -311,12 +299,6 @@ export function PinnaExperience() {
           <PinnaLogo />
         </a>
         <div className="header-actions">
-          {!reducedMotion && (
-            <button className="tour-toggle" type="button" aria-pressed={autoTour} onClick={toggleAutoTour} title={autoTour ? "Pause automatic tour" : "Resume automatic tour"}>
-              <span className="tour-glyph" aria-hidden="true">{autoTour ? "Ⅱ" : "▶"}</span>
-              <span>{autoTour ? tourHolding ? "Resumes soon" : "Pause tour" : "Auto tour"}</span>
-            </button>
-          )}
           <button className="sound-toggle" type="button" aria-pressed={sound && !autoplayBlocked} onClick={() => void toggleSound()} title={sound && !autoplayBlocked ? `Pause ${landingConfig.audioTitle}` : `Play ${landingConfig.audioTitle}`}>
             <span className="sound-bars" aria-hidden="true"><i /><i /><i /></span>
             <span>{autoplayBlocked ? "Play music" : sound ? "Clair de Lune" : "Music off"}</span>
@@ -343,6 +325,10 @@ export function PinnaExperience() {
       <div className="mobile-progress" aria-hidden="true"><i style={{ width: `${((active + 1) / landingConfig.beats.length) * 100}%` }} /></div>
 
       {selection && !staticMode && <div className="world-label" role="status"><b>{selection.label}</b><span>{selection.detail}</span></div>}
+      <div className="quality-chip" role="status" aria-live="polite" title="3D rendering quality">
+        <span className={ready ? "live-dot" : ""} />
+        {staticMode ? "Static story" : `${quality[0].toUpperCase()}${quality.slice(1)} 3D`}
+      </div>
 
       <main id="story">
         {landingConfig.beats.map((beat, index) => {
