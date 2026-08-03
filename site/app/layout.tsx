@@ -9,16 +9,16 @@ const deploymentUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(deploymentUrl),
-  title: "Pinna — One room. One beat.",
+  title: "Pinna: One room. One beat.",
   description: "Create a local listening room and keep nearby Android phones playing together over the same Wi-Fi.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
   openGraph: {
-    title: "Pinna — One room. One beat.",
+    title: "Pinna: One room. One beat.",
     description: "Nearby Android phones, listening together over the same Wi‑Fi.",
     type: "website",
     images: [{ url: "/og.png", width: 1736, height: 910, alt: "Pinna phones connected in one local listening room" }],
   },
-  twitter: { card: "summary_large_image", title: "Pinna — One room. One beat.", description: "Nearby Android phones, listening together over the same Wi‑Fi.", images: ["/og.png"] },
+  twitter: { card: "summary_large_image", title: "Pinna: One room. One beat.", description: "Nearby Android phones, listening together over the same Wi‑Fi.", images: ["/og.png"] },
 };
 
 export const viewport: Viewport = {

@@ -7,9 +7,12 @@ import { buildBeatIntervals, getDocumentProgress, sampleBeat } from "../lib/scro
 
 const intervals = buildBeatIntervals(landingConfig.beats);
 const AUTO_SCROLL_SPEED = 40;
-const AUTO_SCROLL_IDLE_MS = 1800;
+const AUTO_SCROLL_IDLE_MS = 4200;
 const AUTO_SCROLL_START_DELAY_MS = 700;
+const AUTO_SCROLL_SCENE_LINGER_MS = 3600;
 const SCROLL_KEYS = new Set(["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "]);
+const EYEBROW_BEATS = new Set([0, 4]);
+const DETAIL_BEATS = new Set([1, 4, 5]);
 
 class RoomSound {
   private audio: HTMLAudioElement;
@@ -18,7 +21,7 @@ class RoomSound {
     this.audio = new Audio(source);
     this.audio.autoplay = false;
     this.audio.loop = true;
-    this.audio.preload = "auto";
+    this.audio.preload = "none";
     this.audio.volume = 0.2;
   }
 
@@ -45,13 +48,7 @@ class RoomSound {
 function PinnaLogo({ compact = false }: { compact?: boolean }) {
   return (
     <span className="brand-lockup" aria-label="Pinna">
-      <svg className="brand-mark" viewBox="0 0 160 160" aria-hidden="true">
-        <rect width="160" height="160" rx="42" fill="#0F766E" />
-        <g fill="#F4F7F2" transform="translate(22.4 22.4) scale(.72)">
-          <path d="M39 64C34 39 52 18 79 18c27 0 46 20 46 47 0 18-9 27-15 39-5 10-4 21-12 31-10 13-29 14-41 4-8-7-11-16-11-28v-8h18v8c0 7 2 12 7 15 5 4 12 3 16-2 5-6 4-16 10-28 5-10 10-16 10-31 0-17-11-29-28-29-17 0-27 12-23 28H39Z" />
-          <path fillRule="evenodd" d="M47 40h29c18 0 32 13 32 31s-14 32-32 32H65v12H47V40Zm18 17v29h11c8 0 14-6 14-15 0-8-6-14-14-14H65Z" />
-        </g>
-      </svg>
+      <Image className="brand-mark" src="/brand/pinna-app-icon.svg" alt="" width={40} height={40} priority />
       {!compact && <span>Pinna</span>}
     </span>
   );
@@ -62,15 +59,18 @@ export function PinnaExperience() {
   const worldRef = useRef<import("../lib/pinna-world").PinnaWorld | null>(null);
   const soundRef = useRef<RoomSound | null>(null);
   const activeRef = useRef(0);
+  const tourHoldingRef = useRef(false);
+  const tourTimerRef = useRef<number | null>(null);
   const [active, setActive] = useState(0);
   const [sound, setSound] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [introOpen, setIntroOpen] = useState(true);
-  const [quality, setQuality] = useState<"high" | "medium" | "low" | "static">("static");
   const [fallback, setFallback] = useState<string | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [selection, setSelection] = useState<{ label: string; detail: string } | null>(null);
   const [ready, setReady] = useState(false);
+  const [autoTour, setAutoTour] = useState(true);
+  const [tourHolding, setTourHolding] = useState(false);
 
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
@@ -90,7 +90,7 @@ export function PinnaExperience() {
         worldRef.current = new PinnaWorld(canvasRef.current, {
           onSelect: setSelection,
           onFallback: setFallback,
-          onQuality: setQuality,
+          onQuality: () => undefined,
         });
         setReady(true);
       } catch {
@@ -105,38 +105,62 @@ export function PinnaExperience() {
   }, []);
 
   useEffect(() => {
-    let queued = false;
-    const update = () => {
-      queued = false;
+    let frame = 0;
+    const updateWorld = () => {
       const progress = getDocumentProgress(window.scrollY, document.documentElement.scrollHeight, window.innerHeight);
       worldRef.current?.setTargetProgress(progress);
-      const index = sampleBeat(progress, intervals).index;
-      if (index !== activeRef.current) {
-        activeRef.current = index;
-        setActive(index);
-      }
+      frame = requestAnimationFrame(updateWorld);
     };
-    const onScroll = () => {
-      if (queued) return;
-      queued = true;
-      requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    frame = requestAnimationFrame(updateWorld);
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
-    if (introOpen || reducedMotion) return;
+    const sections = Array.from(document.querySelectorAll<HTMLElement>(".story-beat"));
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.find((entry) => entry.isIntersecting);
+      if (!visible) return;
+      const index = Number((visible.target as HTMLElement).dataset.index);
+      if (!Number.isFinite(index) || index === activeRef.current) return;
+      activeRef.current = index;
+      setActive(index);
+    }, { rootMargin: "-48% 0px -48% 0px", threshold: 0 });
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (introOpen || reducedMotion || !autoTour) return;
 
     let frame = 0;
     let lastFrame = performance.now();
     let autoPosition = window.scrollY;
     let resumeAt = lastFrame + AUTO_SCROLL_START_DELAY_MS;
+    let lingeredBeat = -1;
+
+    const currentSample = () => {
+      const progress = getDocumentProgress(window.scrollY, document.documentElement.scrollHeight, window.innerHeight);
+      return sampleBeat(progress, intervals);
+    };
+
+    const holdTour = (duration: number) => {
+      resumeAt = performance.now() + duration;
+      if (tourTimerRef.current !== null) window.clearTimeout(tourTimerRef.current);
+      if (!tourHoldingRef.current) {
+        tourHoldingRef.current = true;
+        setTourHolding(true);
+      }
+      tourTimerRef.current = window.setTimeout(() => {
+        tourHoldingRef.current = false;
+        tourTimerRef.current = null;
+        setTourHolding(false);
+      }, duration);
+    };
 
     const pauseForUser = () => {
       autoPosition = window.scrollY;
-      resumeAt = performance.now() + AUTO_SCROLL_IDLE_MS;
+      lingeredBeat = currentSample().index;
+      holdTour(AUTO_SCROLL_IDLE_MS);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (SCROLL_KEYS.has(event.key)) pauseForUser();
@@ -150,6 +174,13 @@ export function PinnaExperience() {
 
       const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       if (!document.hidden && now >= resumeAt && window.scrollY < maxScroll) {
+        const sample = currentSample();
+        if (sample.local >= 0.2 && sample.index !== lingeredBeat) {
+          lingeredBeat = sample.index;
+          holdTour(AUTO_SCROLL_SCENE_LINGER_MS);
+          frame = requestAnimationFrame(tick);
+          return;
+        }
         autoPosition = Math.max(autoPosition, window.scrollY);
         autoPosition = Math.min(maxScroll, autoPosition + (AUTO_SCROLL_SPEED * elapsed) / 1000);
         window.scrollTo({ top: autoPosition, left: 0, behavior: "auto" });
@@ -171,6 +202,10 @@ export function PinnaExperience() {
 
     return () => {
       cancelAnimationFrame(frame);
+      if (tourTimerRef.current !== null) {
+        window.clearTimeout(tourTimerRef.current);
+        tourTimerRef.current = null;
+      }
       window.removeEventListener("wheel", pauseForUser);
       window.removeEventListener("touchstart", pauseForUser);
       window.removeEventListener("touchmove", pauseForUser);
@@ -179,7 +214,7 @@ export function PinnaExperience() {
       window.removeEventListener("pointerup", pauseForUser);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [introOpen, reducedMotion]);
+  }, [introOpen, reducedMotion, autoTour]);
 
   useEffect(() => {
     const playback = new RoomSound(landingConfig.audioUrl);
@@ -213,9 +248,9 @@ export function PinnaExperience() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [sound, autoplayBlocked, introOpen]);
 
-  const explore = useCallback(async () => {
-    const started = await soundRef.current?.enable();
-    setAutoplayBlocked(!started);
+  const enterExperience = useCallback(async (withSound: boolean) => {
+    const started = withSound ? await soundRef.current?.enable() : false;
+    setAutoplayBlocked(withSound && !started);
     setSound(Boolean(started));
     setIntroOpen(false);
   }, []);
@@ -235,28 +270,37 @@ export function PinnaExperience() {
     document.getElementById(id)?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
   };
 
+  const toggleAutoTour = () => {
+    if (tourTimerRef.current !== null) {
+      window.clearTimeout(tourTimerRef.current);
+      tourTimerRef.current = null;
+    }
+    tourHoldingRef.current = false;
+    setTourHolding(false);
+    setAutoTour((enabled) => !enabled);
+  };
+
   const staticMode = reducedMotion || Boolean(fallback);
 
   return (
     <>
       {introOpen && (
-        <div className="intro-modal" role="dialog" aria-modal="true" aria-labelledby="intro-title" aria-describedby="intro-description">
-          <div className="intro-backdrop" aria-hidden="true" />
-          <div className="intro-card">
-            <div className="intro-illustration" aria-hidden="true">
-              <span className="intro-ripple intro-ripple-one" />
-              <span className="intro-ripple intro-ripple-two" />
-              <span className="intro-ripple intro-ripple-three" />
-              <span className="intro-ear"><i /></span>
-              <b>pinna</b>
+        <div className="entry-gate" role="dialog" aria-modal="true" aria-labelledby="entry-title" aria-describedby="entry-description">
+          <div className="entry-backdrop" aria-hidden="true" />
+          <div className="entry-shell">
+            <div className="entry-copy">
+              <PinnaLogo />
+              <h1 id="entry-title">One room.<br />One beat.</h1>
+              <p id="entry-description">Turn nearby Android phones into one shared listening room. No account or cloud relay required.</p>
+              <div className="entry-actions">
+                <button className="button" type="button" autoFocus onClick={() => void enterExperience(true)}>Enter with sound</button>
+                <button className="entry-muted" type="button" onClick={() => void enterExperience(false)}>Continue muted</button>
+              </div>
             </div>
-            <div className="intro-copy">
-              <p className="intro-eyebrow">EAR TRIVIA</p>
-              <h2 id="intro-title">A small part with a big job.</h2>
-              <p id="intro-description">The <strong>pinna</strong> is the visible outer part of your ear. Its curves collect sound waves and guide them into the ear canal, while also helping you tell where a sound is coming from.</p>
-              <button className="button intro-explore" type="button" autoFocus onClick={() => void explore()}>
-                Explore <span aria-hidden="true">&rarr;</span>
-              </button>
+            <div className="entry-visual" aria-hidden="true">
+              <Image src="/og.png" alt="" fill priority sizes="(max-width: 720px) 100vw, 58vw" />
+              <span className="entry-wave entry-wave-one" />
+              <span className="entry-wave entry-wave-two" />
             </div>
           </div>
         </div>
@@ -266,19 +310,18 @@ export function PinnaExperience() {
         <a className="brand-link" href="#together" onClick={(event) => { event.preventDefault(); jumpTo("together"); }}>
           <PinnaLogo />
         </a>
-        <nav className="header-rail" aria-label="Story sections">
-          {landingConfig.beats.map((beat, index) => (
-            <button key={beat.id} type="button" className={active === index ? "is-active" : ""} onClick={() => jumpTo(beat.id)} aria-current={active === index ? "step" : undefined}>
-              <span>{String(index + 1).padStart(2, "0")}</span>{beat.label}
-            </button>
-          ))}
-        </nav>
         <div className="header-actions">
+          {!reducedMotion && (
+            <button className="tour-toggle" type="button" aria-pressed={autoTour} onClick={toggleAutoTour} title={autoTour ? "Pause automatic tour" : "Resume automatic tour"}>
+              <span className="tour-glyph" aria-hidden="true">{autoTour ? "Ⅱ" : "▶"}</span>
+              <span>{autoTour ? tourHolding ? "Resumes soon" : "Pause tour" : "Auto tour"}</span>
+            </button>
+          )}
           <button className="sound-toggle" type="button" aria-pressed={sound && !autoplayBlocked} onClick={() => void toggleSound()} title={sound && !autoplayBlocked ? `Pause ${landingConfig.audioTitle}` : `Play ${landingConfig.audioTitle}`}>
             <span className="sound-bars" aria-hidden="true"><i /><i /><i /></span>
             <span>{autoplayBlocked ? "Play music" : sound ? "Clair de Lune" : "Music off"}</span>
           </button>
-          <a className="button button-small" href={landingConfig.downloadUrl}>Download</a>
+          <a className="button button-small" href={landingConfig.downloadUrl}>Download Pinna</a>
         </div>
       </header>
 
@@ -292,7 +335,7 @@ export function PinnaExperience() {
         <span className="route-line" aria-hidden="true"><i style={{ transform: `scaleY(${(active + 1) / landingConfig.beats.length})` }} /></span>
         {landingConfig.beats.map((beat, index) => (
           <button key={beat.id} type="button" className={active === index ? "is-active" : ""} onClick={() => jumpTo(beat.id)} aria-label={`Go to ${beat.label}`}>
-            <span>{String(index + 1).padStart(2, "0")}</span><b>{beat.label}</b>
+            <span aria-hidden="true" /><b>{beat.label}</b>
           </button>
         ))}
       </aside>
@@ -300,13 +343,12 @@ export function PinnaExperience() {
       <div className="mobile-progress" aria-hidden="true"><i style={{ width: `${((active + 1) / landingConfig.beats.length) * 100}%` }} /></div>
 
       {selection && !staticMode && <div className="world-label" role="status"><b>{selection.label}</b><span>{selection.detail}</span></div>}
-      <div className="quality-chip" aria-hidden="true"><span className={ready ? "live-dot" : ""} />{staticMode ? "Static story" : `${quality} 3D`}</div>
 
       <main id="story">
         {landingConfig.beats.map((beat, index) => {
           const style = { "--beat-vh": `${Math.round(beat.scrollWeight * 112)}vh` } as CSSProperties;
           return (
-            <section id={beat.id} key={beat.id} className={`story-beat beat-${index + 1}`} style={style} data-active={active === index}>
+            <section id={beat.id} key={beat.id} className={`story-beat beat-${index + 1} story-layout-${index + 1}`} style={style} data-index={index} data-active={active === index}>
               {index === 0 && !staticMode && (
                 <div className="hero-poster-live" aria-hidden="true">
                   <Image src={beat.poster} alt="" fill priority sizes="(max-width: 720px) 100vw, 48vw" />
@@ -317,26 +359,24 @@ export function PinnaExperience() {
                   <Image src={beat.poster} alt="" fill sizes="(max-width: 720px) 100vw, 48vw" priority={index < 2} />
                 </div>
               )}
-              <div className="copy-card">
-                <div className="beat-kicker"><span>{String(index + 1).padStart(2, "0")}</span>{beat.eyebrow}</div>
+              <div className="story-copy">
+                {EYEBROW_BEATS.has(index) && <div className="beat-kicker">{beat.eyebrow}</div>}
                 <h1>{beat.title}</h1>
                 <p>{beat.body}</p>
-                <ul aria-label="Highlights">{beat.tags.map((tag) => <li key={tag}>{tag}</li>)}</ul>
+                {DETAIL_BEATS.has(index) && <ul className="beat-facts" aria-label="Highlights">{beat.tags.map((tag) => <li key={tag}>{tag}</li>)}</ul>}
                 {index === 0 && (
                   <div className="hero-actions">
-                    <a className="button" href={landingConfig.downloadUrl}>Get Pinna <span aria-hidden="true">↗</span></a>
-                    <span>Android 8+ · APK via GitHub Releases</span>
+                    <a className="button" href={landingConfig.downloadUrl}>Download Pinna</a>
                   </div>
                 )}
+                {index === 5 && <p className="ear-note"><strong>Why Pinna?</strong> The pinna is the outer ear. Its curves collect sound and help locate where it came from.</p>}
                 {index === 6 && (
                   <div className="final-actions">
-                    <a className="button" href={landingConfig.downloadUrl}>Download Pinna <span aria-hidden="true">↗</span></a>
-                    <a className="text-link" href={landingConfig.repositoryUrl}>View source on GitHub <span aria-hidden="true">↗</span></a>
-                    <small>Android 8+ · APK via GitHub Releases</small>
+                    <a className="button" href={landingConfig.downloadUrl}>Download Pinna</a>
+                    <a className="text-link" href={landingConfig.repositoryUrl}>View source on GitHub</a>
                   </div>
                 )}
               </div>
-              {index === 0 && <button className="scroll-cue" type="button" onClick={() => jumpTo("choose")}><span aria-hidden="true" />Scroll to enter the room</button>}
             </section>
           );
         })}
@@ -346,7 +386,7 @@ export function PinnaExperience() {
         <PinnaLogo compact />
         <p>Made for the phones already in the room.</p>
         <div><a href={landingConfig.repositoryUrl}>Source</a><a href={landingConfig.downloadUrl}>Releases</a></div>
-        <small>Local-first · Tracker-free · Clair de Lune begins when you explore</small>
+        <small>Local-first / Tracker-free / Music starts only when you choose</small>
       </footer>
     </>
   );
