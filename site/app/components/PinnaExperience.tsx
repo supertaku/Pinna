@@ -41,9 +41,12 @@ class RoomSound {
 function PinnaLogo({ compact = false }: { compact?: boolean }) {
   return (
     <span className="brand-lockup" aria-label="Pinna">
-      <svg className="brand-mark" viewBox="0 0 108 108" aria-hidden="true">
-        <rect width="108" height="108" rx="28" fill="#0F766E" />
-        <path fill="#F4F7F2" d="M28,28h24c15,0 28,12 28,27s-13,27-28,27h-8V64h8c5,0 10-4 10-9s-5-9-10-9H46v42H28z" />
+      <svg className="brand-mark" viewBox="0 0 160 160" aria-hidden="true">
+        <rect width="160" height="160" rx="42" fill="#0F766E" />
+        <g fill="#F4F7F2" transform="translate(22.4 22.4) scale(.72)">
+          <path d="M39 64C34 39 52 18 79 18c27 0 46 20 46 47 0 18-9 27-15 39-5 10-4 21-12 31-10 13-29 14-41 4-8-7-11-16-11-28v-8h18v8c0 7 2 12 7 15 5 4 12 3 16-2 5-6 4-16 10-28 5-10 10-16 10-31 0-17-11-29-28-29-17 0-27 12-23 28H39Z" />
+          <path fillRule="evenodd" d="M47 40h29c18 0 32 13 32 31s-14 32-32 32H65v12H47V40Zm18 17v29h11c8 0 14-6 14-15 0-8-6-14-14-14H65Z" />
+        </g>
       </svg>
       {!compact && <span>Pinna</span>}
     </span>

@@ -441,9 +441,9 @@ export class PinnaWorld {
   }
 
   private makePinnaMark(depth: number, scale: number, materials: THREE.Material[]) {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108"><path fill="#fff" d="M28,28h24c15,0 28,12 28,27s-13,27-28,27h-8V64h8c5,0 10-4 10-9s-5-9-10-9H46v42H28z"/></svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><path fill="#fff" d="M39 64C34 39 52 18 79 18c27 0 46 20 46 47 0 18-9 27-15 39-5 10-4 21-12 31-10 13-29 14-41 4-8-7-11-16-11-28v-8h18v8c0 7 2 12 7 15 5 4 12 3 16-2 5-6 4-16 10-28 5-10 10-16 10-31 0-17-11-29-28-29-17 0-27 12-23 28H39Z"/><path fill="#fff" fill-rule="evenodd" d="M47 40h29c18 0 32 13 32 31s-14 32-32 32H65v12H47V40Zm18 17v29h11c8 0 14-6 14-15 0-8-6-14-14-14H65Z"/></svg>`;
     const data = new SVGLoader().parse(svg);
-    const shapes = SVGLoader.createShapes(data.paths[0]);
+    const shapes = data.paths.flatMap((path) => SVGLoader.createShapes(path));
     const group = new THREE.Group();
     shapes.forEach((shape) => {
       const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelSize: 0.8, bevelThickness: 0.8, bevelSegments: 3 });
