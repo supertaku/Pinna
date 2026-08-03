@@ -24,5 +24,7 @@ test("server-renders Pinna metadata and semantic story", async () => {
   assert.match(html, />Explore\s/);
   assert.match(html, /hero-poster-live/);
   assert.match(html, /\/posters\/together\.svg/);
+  assert.match(html, /scrollRestoration/);
+  assert.match(html, /pageshow/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|google-analytics|googletagmanager/i);
 });

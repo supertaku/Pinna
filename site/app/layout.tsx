@@ -31,6 +31,23 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(() => {
+              if ("scrollRestoration" in window.history) {
+                window.history.scrollRestoration = "manual";
+              }
+              const resetScroll = () => {
+                window.scrollTo(0, 0);
+                window.requestAnimationFrame(() => window.scrollTo(0, 0));
+              };
+              resetScroll();
+              window.addEventListener("pageshow", resetScroll);
+            })();`,
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );
