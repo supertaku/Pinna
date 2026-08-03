@@ -246,6 +246,7 @@ export function PinnaExperience() {
   }, [sound, autoplayBlocked, introOpen]);
 
   const explore = useCallback(async () => {
+    worldRef.current?.setPreviewing(false);
     const started = await soundRef.current?.enable();
     setAutoplayBlocked(!started);
     setSound(Boolean(started));
@@ -276,6 +277,7 @@ export function PinnaExperience() {
           <div className="intro-backdrop" aria-hidden="true" />
           <div className="intro-card">
             <div className="intro-illustration" aria-hidden="true">
+              <Image className="intro-platform-preview" src={landingConfig.beats[0].poster} alt="" fill priority sizes="(max-width: 720px) 100vw, 30vw" />
               <span className="intro-ripple intro-ripple-one" />
               <span className="intro-ripple intro-ripple-two" />
               <span className="intro-ripple intro-ripple-three" />
@@ -307,7 +309,7 @@ export function PinnaExperience() {
         </div>
       </header>
 
-      <div className={`world-shell ${ready ? "is-ready" : ""} ${staticMode ? "is-static" : ""}`} aria-hidden="true">
+      <div className={`world-shell ${ready ? "is-ready" : ""} ${introOpen ? "is-previewing" : ""} ${staticMode ? "is-static" : ""}`} aria-hidden="true">
         <canvas ref={canvasRef} className="world-canvas" />
         <div className="world-glow" />
         {!ready && !staticMode && <div className="loading-orbit"><span /><b>Building the room</b></div>}

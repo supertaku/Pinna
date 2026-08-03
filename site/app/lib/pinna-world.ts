@@ -117,6 +117,8 @@ export class PinnaWorld {
   private clock = new THREE.Clock();
   private targetProgress = 0;
   private progress = 0;
+  private preview = 1;
+  private previewTarget = 1;
   private raf = 0;
   private disposed = false;
   private visible = true;
@@ -132,6 +134,7 @@ export class PinnaWorld {
   private pointerTarget = new THREE.Vector2();
   private pointerCurrent = new THREE.Vector2();
   private packetMesh: THREE.InstancedMesh | null = null;
+  private celestialGroup = new THREE.Group();
   private routeCurve!: THREE.CatmullRomCurve3;
   private cameraCurve!: THREE.CatmullRomCurve3;
   private targetCurve!: THREE.CatmullRomCurve3;
@@ -186,6 +189,10 @@ export class PinnaWorld {
     this.targetProgress = THREE.MathUtils.clamp(progress, 0, 1);
   }
 
+  setPreviewing(previewing: boolean) {
+    this.previewTarget = previewing ? 1 : 0;
+  }
+
   private setupRenderer() {
     this.renderer.setClearColor(INK, 0);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -211,6 +218,7 @@ export class PinnaWorld {
     key.shadow.camera.top = 11;
     key.shadow.camera.bottom = -11;
     this.scene.add(key, this.activeRim);
+    this.buildCelestialBodies();
 
     this.routeCurve = new THREE.CatmullRomCurve3(SCENE_Z.map((z, i) => new THREE.Vector3(i % 2 ? -0.8 : 0.8, 0.2, z)), false, "catmullrom", 0.35);
     this.cameraCurve = new THREE.CatmullRomCurve3(landingConfig.beats.map((b) => new THREE.Vector3(...b.camera.position)), false, "catmullrom", 0.28);
@@ -247,6 +255,78 @@ export class PinnaWorld {
 
     this.buildPackets();
     this.setupPostProcessing();
+  }
+
+  private buildCelestialBodies() {
+    const detail = this.quality.tier === "high" ? 3 : this.quality.tier === "medium" ? 2 : 1;
+    const starCount = this.quality.tier === "high" ? 420 : this.quality.tier === "medium" ? 280 : 160;
+    const starPositions = new Float32Array(starCount * 3);
+    const starColors = new Float32Array(starCount * 3);
+    const cream = new THREE.Color(CREAM);
+    const mint = new THREE.Color(MINT);
+    for (let index = 0; index < starCount; index++) {
+      const depth = 42 + Math.random() * 145;
+      const spreadY = depth * 0.46;
+      const spreadX = spreadY * 1.85;
+      starPositions[index * 3] = (Math.random() * 2 - 1) * spreadX;
+      starPositions[index * 3 + 1] = (Math.random() * 2 - 1) * spreadY;
+      starPositions[index * 3 + 2] = -depth;
+      const color = Math.random() > 0.82 ? mint : cream;
+      const brightness = 0.52 + Math.random() * 0.48;
+      starColors[index * 3] = color.r * brightness;
+      starColors[index * 3 + 1] = color.g * brightness;
+      starColors[index * 3 + 2] = color.b * brightness;
+    }
+    const starGeometry = new THREE.BufferGeometry();
+    starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
+    starGeometry.setAttribute("color", new THREE.BufferAttribute(starColors, 3));
+    const stars = new THREE.Points(
+      starGeometry,
+      new THREE.PointsMaterial({ size: this.quality.tier === "low" ? 0.28 : 0.22, sizeAttenuation: true, vertexColors: true, fog: false, opacity: 0.78, transparent: true, depthWrite: false, toneMapped: false }),
+    );
+    stars.renderOrder = -12;
+    this.celestialGroup.add(stars);
+
+    const makePlanet = (position: [number, number, number], radius: number, color: number, opacity: number) => {
+      const planet = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(1, detail),
+        new THREE.MeshBasicMaterial({ color, fog: false, opacity, transparent: true, depthWrite: false, toneMapped: false }),
+      );
+      planet.position.set(...position);
+      planet.scale.setScalar(radius);
+      planet.renderOrder = -10;
+      this.celestialGroup.add(planet);
+
+      const atmosphere = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(1.08, Math.max(1, detail - 1)),
+        new THREE.MeshBasicMaterial({ color, fog: false, opacity: opacity * 0.13, transparent: true, depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending, toneMapped: false }),
+      );
+      atmosphere.position.copy(planet.position);
+      atmosphere.scale.copy(planet.scale);
+      atmosphere.renderOrder = -11;
+      this.celestialGroup.add(atmosphere);
+      return planet;
+    };
+
+    const firstPlanet = makePlanet([-18, 9, -58], 9.6, 0x258f86, 0.72);
+    firstPlanet.rotation.set(0.18, -0.5, 0.08);
+
+    const ringedPlanet = makePlanet([18, 10, -104], 10.8, 0x176761, 0.64);
+    ringedPlanet.rotation.set(-0.12, 0.45, 0);
+    const rings = new THREE.Mesh(
+      new THREE.RingGeometry(12.8, 17.4, this.quality.tier === "low" ? 40 : 72),
+      new THREE.MeshBasicMaterial({ color: MINT, fog: false, opacity: 0.24, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    );
+    rings.position.copy(ringedPlanet.position);
+    rings.rotation.set(1.12, 0.1, -0.28);
+    rings.renderOrder = -10;
+    this.celestialGroup.add(rings);
+
+    const moon = makePlanet([3, 14, -48], 2.2, CREAM, 0.6);
+    moon.rotation.set(0.4, 0.25, -0.2);
+
+    this.camera.add(this.celestialGroup);
+    this.scene.add(this.camera);
   }
 
   private clay(color: number, materials: THREE.Material[], emissive = 0) {
@@ -574,6 +654,7 @@ export class PinnaWorld {
 
   private update(delta: number, elapsed: number) {
     this.progress = damp(this.progress, this.targetProgress, 8.4, delta);
+    this.preview = damp(this.preview, this.previewTarget, 6.2, delta);
     this.pointerCurrent.x = damp(this.pointerCurrent.x, this.pointerTarget.x, 5.2, delta);
     this.pointerCurrent.y = damp(this.pointerCurrent.y, this.pointerTarget.y, 5.2, delta);
     const sampled = sampleBeat(this.progress, this.intervals);
@@ -583,10 +664,12 @@ export class PinnaWorld {
     this.camera.position.x += this.pointerCurrent.x * 0.22;
     this.camera.position.y += this.pointerCurrent.y * 0.14;
     const target = this.targetCurve.getPoint(curveT);
+    target.x += this.preview * 5.2;
+    target.y += this.preview * 0.45;
     this.camera.lookAt(target);
     const beat = landingConfig.beats[sampled.index];
     const next = landingConfig.beats[Math.min(sampled.index + 1, landingConfig.beats.length - 1)];
-    this.camera.fov = THREE.MathUtils.lerp(beat.camera.fov, next.camera.fov, smoothLocal);
+    this.camera.fov = THREE.MathUtils.lerp(beat.camera.fov, next.camera.fov, smoothLocal) + this.preview * 4;
     this.camera.rotateZ(THREE.MathUtils.lerp(beat.camera.roll ?? 0, next.camera.roll ?? 0, smoothLocal));
     this.camera.updateProjectionMatrix();
     this.activeRim.position.set(target.x + 1.5, target.y + 3, target.z + 3);
@@ -607,6 +690,7 @@ export class PinnaWorld {
       if (material.uniforms.uProgress) material.uniforms.uProgress.value = smoothLocal;
       if (material.uniforms.uPulse) material.uniforms.uPulse.value = 0.5 + 0.5 * Math.sin(elapsed * 2.4);
     });
+    this.celestialGroup.rotation.z = Math.sin(elapsed * 0.035) * 0.004;
     this.updatePackets(elapsed);
   }
 

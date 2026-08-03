@@ -24,6 +24,7 @@ test("server-renders Pinna metadata and semantic story", async () => {
   assert.match(html, /Why Pinna\?/);
   assert.match(html, /quality-chip/);
   assert.match(html, /Medium 3D/);
+  assert.match(html, /is-previewing/);
   assert.doesNotMatch(html, /Pause tour|Enter with sound|Continue muted|Scroll to enter the room/);
   assert.match(html, /hero-poster-live/);
   assert.match(html, /\/posters\/together\.svg/);
