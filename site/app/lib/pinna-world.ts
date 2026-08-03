@@ -308,21 +308,21 @@ export class PinnaWorld {
       return planet;
     };
 
-    const firstPlanet = makePlanet([-18, 9, -58], 9.6, 0x258f86, 0.72);
+    const firstPlanet = makePlanet([-34, 15, -130], 0.78, 0x258f86, 0.24);
     firstPlanet.rotation.set(0.18, -0.5, 0.08);
 
-    const ringedPlanet = makePlanet([18, 10, -104], 10.8, 0x176761, 0.64);
+    const ringedPlanet = makePlanet([38, 17, -168], 1.05, 0x176761, 0.2);
     ringedPlanet.rotation.set(-0.12, 0.45, 0);
     const rings = new THREE.Mesh(
-      new THREE.RingGeometry(12.8, 17.4, this.quality.tier === "low" ? 40 : 72),
-      new THREE.MeshBasicMaterial({ color: MINT, fog: false, opacity: 0.24, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+      new THREE.RingGeometry(1.24, 1.7, this.quality.tier === "low" ? 32 : 48),
+      new THREE.MeshBasicMaterial({ color: MINT, fog: false, opacity: 0.09, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
     );
     rings.position.copy(ringedPlanet.position);
     rings.rotation.set(1.12, 0.1, -0.28);
     rings.renderOrder = -10;
     this.celestialGroup.add(rings);
 
-    const moon = makePlanet([3, 14, -48], 2.2, CREAM, 0.6);
+    const moon = makePlanet([9, 19, -92], 0.24, CREAM, 0.22);
     moon.rotation.set(0.4, 0.25, -0.2);
 
     this.camera.add(this.celestialGroup);
